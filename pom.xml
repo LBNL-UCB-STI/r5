@@ -318,13 +318,13 @@
         <repository>
             <id>osgeo</id>
             <name>Open Source Geospatial Foundation Repository</name>
-            <url>https://download.osgeo.org/webdav/geotools/</url>
+            <url>https://repo.osgeo.org/repository/release/</url>
         </repository>
         <!-- For the polyline encoder -->
         <repository>
             <id>axiom-public-releases</id>
             <name>Axiom Releases</name>
-            <url>http://nexus.axiomalaska.com/nexus/content/repositories/public-releases</url>
+            <url>https://nexus.axiomalaska.com/nexus/content/repositories/public-releases</url>
         </repository>
     </repositories>
 
