@@ -617,7 +617,7 @@ public class EdgeStore implements Serializable {
 
                 if (walking) {
                     //Recalculation of time and speed is needed if we are walking with bike
-                    float speedms = calculateSpeed(req, StreetMode.WALK)*0.9f;
+                    double speedms = calculateSpeed(req, StreetMode.WALK)*0.9f;
                     time = (float) (getLengthM() / speedms);
                 }
 
@@ -1189,7 +1189,7 @@ public class EdgeStore implements Serializable {
 
         @Override
         public float getTravelTimeSeconds(Edge edge, int durationSeconds, StreetMode streetMode, ProfileRequest req) {
-            float speedms = edge.calculateSpeed(req, streetMode);
+            double speedms = edge.calculateSpeed(req, streetMode);
             return (float) (edge.getLengthM() / speedms);
         }
     }
