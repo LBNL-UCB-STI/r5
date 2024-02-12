@@ -22,6 +22,8 @@ import com.conveyal.r5.streets.EdgeStore.Edge;
 import com.conveyal.r5.transit.TransitLayer;
 import com.conveyal.r5.transit.TransportNetwork;
 import com.conveyal.r5.util.P2;
+import com.esotericsoftware.minlog.Log;
+import org.apache.commons.lang3.NotImplementedException;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.Coordinate;
@@ -58,17 +60,17 @@ import static com.conveyal.r5.streets.VertexStore.fixedDegreesToFloating;
 
 /**
  * This class stores the street network. Information about public transit is in a separate layer.
- *
+ * <p>
  * Is is currently implemented as a column store.
- *
+ * <p>
  * We could also use something like https://github.com/RichardWarburton/slab which simulates Java objects in a chunk
  * of memory that could be mapped to a file. This could be useful for routing across continents or large countries.
- *
+ * <p>
  * While the transit search is very fast (probably because it tends to search in order over contiguous arrays) the
  * street searches can be surprisingly slow. We suspect this is due to the vertices being in somewhat random order
  * in memory. The solution would be to order the vertices in memory according to their proximity in the graph,
  * then sort edges according to from-vertex order.
- *
+ * <p>
  * Really what you want to do is embed the distance metric defined by the graph in 1D space. This is a 'metric embedding'
  * or multidimensional scaling, analagous to force-directed graph layout. http://ceur-ws.org/Vol-733/paper_pacher.pdf
  * You could do something similar using their geographic coordinates (Morton-code-sort the vertices).
@@ -115,7 +117,9 @@ public class StreetLayer implements Serializable, Cloneable {
     public transient List<TIntList> outgoingEdges;
     public transient List<TIntList> incomingEdges;
 
-    /** A spatial index of all street network edges, using fixed-point WGS84 coordinates. */
+    /**
+     * A spatial index of all street network edges, using fixed-point WGS84 coordinates.
+     */
     public transient IntHashGrid spatialIndex = new IntHashGrid();
 
     /**
@@ -139,7 +143,9 @@ public class StreetLayer implements Serializable, Cloneable {
     // This is only used when loading from OSM, and is then nulled to save memory.
     transient OSM osm;
 
-    /** Envelope of this street layer, in decimal degrees (floating, not fixed-point) */
+    /**
+     * Envelope of this street layer, in decimal degrees (floating, not fixed-point)
+     */
     public Envelope envelope = new Envelope();
 
     TLongIntMap vertexIndexForOsmNode = new TLongIntHashMap(100_000, 0.75f, -1, -1);
@@ -187,10 +193,10 @@ public class StreetLayer implements Serializable, Cloneable {
     public IndexedPolygonCollection waitTimePolygons;
 
     public static final EnumSet<EdgeStore.EdgeFlag> ALL_PERMISSIONS = EnumSet
-        .of(EdgeStore.EdgeFlag.ALLOWS_BIKE, EdgeStore.EdgeFlag.ALLOWS_CAR,
-            EdgeStore.EdgeFlag.ALLOWS_PEDESTRIAN, EdgeStore.EdgeFlag.NO_THRU_TRAFFIC,
-            EdgeStore.EdgeFlag.NO_THRU_TRAFFIC_BIKE, EdgeStore.EdgeFlag.NO_THRU_TRAFFIC_PEDESTRIAN,
-            EdgeStore.EdgeFlag.NO_THRU_TRAFFIC_CAR);
+            .of(EdgeStore.EdgeFlag.ALLOWS_BIKE, EdgeStore.EdgeFlag.ALLOWS_CAR,
+                    EdgeStore.EdgeFlag.ALLOWS_PEDESTRIAN, EdgeStore.EdgeFlag.NO_THRU_TRAFFIC,
+                    EdgeStore.EdgeFlag.NO_THRU_TRAFFIC_BIKE, EdgeStore.EdgeFlag.NO_THRU_TRAFFIC_PEDESTRIAN,
+                    EdgeStore.EdgeFlag.NO_THRU_TRAFFIC_CAR);
 
     public boolean bikeSharing = false;
 
@@ -198,17 +204,19 @@ public class StreetLayer implements Serializable, Cloneable {
         speedLabeler = new SpeedLabeler(tnBuilderConfig.speeds);
     }
 
-    /** Load street layer from an OSM-lib OSM DB */
+    /**
+     * Load street layer from an OSM-lib OSM DB
+     */
     public void loadFromOsm(OSM osm) {
         loadFromOsm(osm, true, false);
     }
 
     /**
      * Returns true if way can be used for routing
-     *
+     * <p>
      * Routable ways are highways (unless they are raceways or highway rest_area/services since those are similar to landuse tags
      * Or public_transport platform or railway platform unless its usage tag is tourism
-     *
+     * <p>
      * In both cases roads need to exists in reality aka don't have:
      * - construction,
      * - proposed,
@@ -216,9 +224,10 @@ public class StreetLayer implements Serializable, Cloneable {
      * - abandoned
      * - unbuilt
      * tags
-     *
+     * <p>
      * Both construction tagging schemes are supported tag construction=anything and highway/cycleway=construction
      * same with proposed.
+     *
      * @param way
      * @return
      */
@@ -229,17 +238,17 @@ public class StreetLayer implements Serializable, Cloneable {
 
         if (
             //Way is routable if it is highway
-            (way.hasTag("highway") && !(
-                //Unless it is raceway or rest area
-                //Those two are areas which are places around highway (similar to landuse tags they aren't routable)
-                highway.equals("services") || highway.equals("rest_area")
-                //highway=conveyor is obsoleted tag for escalator and is actually routable
-                || highway.equals("raceway")))
-                //or it is public transport platform or railway platform
-            || (way.hasTag("public_transport", "platform")
-                || way.hasTag("railway", "platform")
-                //unless it's usage is tourism
-                && !way.hasTag("usage", "tourism"))) {
+                (way.hasTag("highway") && !(
+                        //Unless it is raceway or rest area
+                        //Those two are areas which are places around highway (similar to landuse tags they aren't routable)
+                        highway.equals("services") || highway.equals("rest_area")
+                                //highway=conveyor is obsoleted tag for escalator and is actually routable
+                                || highway.equals("raceway")))
+                        //or it is public transport platform or railway platform
+                        || (way.hasTag("public_transport", "platform")
+                        || way.hasTag("railway", "platform")
+                        //unless it's usage is tourism
+                        && !way.hasTag("usage", "tourism"))) {
 
             isRoutable = actuallyExistsInReality(highway, way);
 
@@ -256,28 +265,31 @@ public class StreetLayer implements Serializable, Cloneable {
 
     /**
      * Returns true if road is not in construction, abandoned, removed or proposed
+     *
      * @param highway value of highway or cycleway tag
      * @param way
      * @return
      */
     private static boolean actuallyExistsInReality(String highway, Way way) {
         return !("construction".equals(highway)
-            || "abandoned".equals(highway)|| "removed".equals(highway)
-            || "proposed".equals(highway) || "propossed".equals(highway)
-            || "unbuilt".equals(highway)
-            || way.hasTag("construction") || way.hasTag("proposed"));
+                || "abandoned".equals(highway) || "removed".equals(highway)
+                || "proposed".equals(highway) || "propossed".equals(highway)
+                || "unbuilt".equals(highway)
+                || way.hasTag("construction") || way.hasTag("proposed"));
     }
 
 
-    /** Load OSM, optionally removing floating subgraphs (recommended) */
-    public void loadFromOsm (OSM osm, boolean removeIslands, boolean saveVertexIndex) {
+    /**
+     * Load OSM, optionally removing floating subgraphs (recommended)
+     */
+    public void loadFromOsm(OSM osm, boolean removeIslands, boolean saveVertexIndex) {
         loadFromOsm(osm, removeIslands, saveVertexIndex, LINK_RADIUS_METERS);
     }
 
     /**
      * Added for BEAM to pass arbitrary linkRadiusMeters value.
      */
-    public void loadFromOsm (OSM osm, boolean removeIslands, boolean saveVertexIndex, double linkRadiusMeters) {
+    public void loadFromOsm(OSM osm, boolean removeIslands, boolean saveVertexIndex, double linkRadiusMeters) {
         if (!osm.intersectionDetection)
             throw new IllegalArgumentException("Intersection detection not enabled on OSM source");
 
@@ -385,13 +397,13 @@ public class StreetLayer implements Serializable, Cloneable {
 
     /**
      * Gets way name from OSM name tag
-     *
+     * <p>
      * It uses OSM Mapdb
-     *
+     * <p>
      * Uses {@link #getName(long, Locale)}
      *
      * @param edgeIdx edgeStore EdgeIDX
-     * @param locale which locale to use
+     * @param locale  which locale to use
      * @return null if edge doesn't have name tag or if OSM data isn't loaded
      */
     public String getNameEdgeIdx(int edgeIdx, Locale locale) {
@@ -417,9 +429,10 @@ public class StreetLayer implements Serializable, Cloneable {
 
     /**
      * Gets way name from OSM name tag
-     *
+     * <p>
      * TODO: generate name on unnamed ways (sidewalks, cycleways etc.)
-     * @param OSMid OSM ID of a way
+     *
+     * @param OSMid  OSM ID of a way
      * @param locale which locale to use
      * @return
      */
@@ -434,9 +447,9 @@ public class StreetLayer implements Serializable, Cloneable {
 
     /**
      * Gets all the OSM tags of specified OSM way
-     *
+     * <p>
      * Tags are returned as tag=value separated with ;
-     *
+     * <p>
      * AKA same format that {@link Way#setTagsFromString(String)} accepts
      *
      * @param edge for which to get tags
@@ -449,14 +462,16 @@ public class StreetLayer implements Serializable, Cloneable {
         Way way = osm.ways.get(edge.getOSMID());
         if (way != null && !way.hasNoTags()) {
             return way.tags.stream()
-                .map(OSMEntity.Tag::toString)
-                .collect(Collectors.joining(";"));
+                    .map(OSMEntity.Tag::toString)
+                    .collect(Collectors.joining(";"));
         }
         return null;
 
     }
 
-    /** Connect areal park and rides to the graph */
+    /**
+     * Connect areal park and rides to the graph
+     */
     private void buildParkAndRideAreas(List<Way> parkAndRideWays) {
         VertexStore.Vertex v = this.vertexStore.getCursor();
         EdgeStore.Edge e = this.edgeStore.getCursor();
@@ -490,7 +505,7 @@ public class StreetLayer implements Serializable, Cloneable {
                 // Connect only to edges that are good to link to (This skips tunnels)
                 // and skips link edges (that were used to link other stuff)
                 if (!e.getFlag(EdgeStore.EdgeFlag.LINKABLE)
-                    || e.getFlag(EdgeStore.EdgeFlag.LINK)) {
+                        || e.getFlag(EdgeStore.EdgeFlag.LINK)) {
                     return true;
                 }
                 LineString edgeGeometry = e.getGeometry();
@@ -507,9 +522,7 @@ public class StreetLayer implements Serializable, Cloneable {
 
                         if (single instanceof Point) {
                             connectParkAndRide(centerVertex, single.getCoordinate(), e);
-                        }
-
-                        else if (single instanceof LineString) {
+                        } else if (single instanceof LineString) {
                             // coincident segments. TODO can this even happen?
                             // just connect start and end of coincident segment
                             Coordinate[] singleCoords = single.getCoordinates();
@@ -536,7 +549,7 @@ public class StreetLayer implements Serializable, Cloneable {
     /**
      * Added for BEAM to pass arbitrary linkRadiusMeters value.
      */
-    private void buildParkAndRideNodes (List<Node> nodes, double linkRadiusMeters) {
+    private void buildParkAndRideNodes(List<Node> nodes, double linkRadiusMeters) {
         VertexStore.Vertex v = vertexStore.getCursor();
         for (Node node : nodes) {
             int vidx = vertexStore.addVertex(node.getLat(), node.getLon());
@@ -581,8 +594,10 @@ public class StreetLayer implements Serializable, Cloneable {
         }
     }
 
-    /** Connect a park and ride vertex to the street network at a particular location and edge */
-    private void connectParkAndRide (int centerVertex, Coordinate coord, EdgeStore.Edge edge) {
+    /**
+     * Connect a park and ride vertex to the street network at a particular location and edge
+     */
+    private void connectParkAndRide(int centerVertex, Coordinate coord, EdgeStore.Edge edge) {
         Split split = Split.findOnEdge(coord.y, coord.x, edge);
         int targetVertex = splitEdge(split);
         EdgeStore.Edge created = edgeStore.addStreetPair(centerVertex, targetVertex, 1, -1); // basically free to enter/leave P&R for now.
@@ -601,10 +616,10 @@ public class StreetLayer implements Serializable, Cloneable {
      * restriction object to store this information. The restriction is added to the network and associated with
      * the edges it affects, so the method need not return anything.
      *
-     * @param osmRelationId the OSM ID of the supplied turn restriction relation
+     * @param osmRelationId       the OSM ID of the supplied turn restriction relation
      * @param restrictionRelation a turn restriction relation from OSM
      */
-    private void applyTurnRestriction (long osmRelationId, Relation restrictionRelation) {
+    private void applyTurnRestriction(long osmRelationId, Relation restrictionRelation) {
 
         // If true, this is an "only" turn restriction rather than a "no" turn restriction, as in
         // "right turn only" rather than "no right turn".
@@ -641,8 +656,7 @@ public class StreetLayer implements Serializable, Cloneable {
                     return;
                 }
                 from = member;
-            }
-            else if ("to".equals(member.role)) {
+            } else if ("to".equals(member.role)) {
                 if (to != null) {
                     LOG.error("Turn restriction {} has multiple 'to' members, skipping.", osmRelationId);
                     return;
@@ -652,8 +666,7 @@ public class StreetLayer implements Serializable, Cloneable {
                     return;
                 }
                 to = member;
-            }
-            else if ("via".equals(member.role)) {
+            } else if ("via".equals(member.role)) {
                 via.add(member);
             }
             // Osmosis may produce situations where referential integrity is violated, probably at the edge of the
@@ -707,9 +720,9 @@ public class StreetLayer implements Serializable, Cloneable {
                 return;
             }
             // use array to dodge Java closure "effectively final" nonsense
-            final int[] fromEdge = new int[] { -1 };
+            final int[] fromEdge = new int[]{-1};
             final long fromWayId = from.id; // more "effectively final" nonsense
-            final boolean[] bad = new boolean[] { false };
+            final boolean[] bad = new boolean[]{false};
             // find the street layer edge corresponding to the turn restriction's "from" OSM way
             incomingEdges.get(vertex).forEach(eidx -> {
                 e.seek(eidx);
@@ -726,7 +739,7 @@ public class StreetLayer implements Serializable, Cloneable {
             });
 
             // find the street layer edge corresponding to the turn restriction's "to" OSM way
-            final int[] toEdge = new int[] { -1 };
+            final int[] toEdge = new int[]{-1};
             final long toWayId = to.id; // more effectively final nonsense
             outgoingEdges.get(vertex).forEach(eidx -> {
                 e.seek(eidx);
@@ -775,8 +788,8 @@ public class StreetLayer implements Serializable, Cloneable {
                 for (int viaPos = 0; viaPos < viaNodes.length; viaPos++) {
                     for (long viaNode : viaNodes[viaPos]) {
                         if (node == viaNode) {
-                            nodes.add(new long[] { node });
-                            ways.add(new long[] { via.get(viaPos).id });
+                            nodes.add(new long[]{node});
+                            ways.add(new long[]{via.get(viaPos).id});
                         }
                     }
                 }
@@ -857,9 +870,9 @@ public class StreetLayer implements Serializable, Cloneable {
 
             // convert OSM nodes and ways into IDs
             // first find the fromEdge and toEdge. dodge effectively final nonsense
-            final int[] fromEdge = new int[] { -1 };
+            final int[] fromEdge = new int[]{-1};
             final long fromWayId = from.id; // more effectively final nonsense
-            final boolean[] bad = new boolean[] { false };
+            final boolean[] bad = new boolean[]{false};
 
             int fromVertex = vertexIndexForOsmNode.get(pathNodes[0]);
 
@@ -881,7 +894,7 @@ public class StreetLayer implements Serializable, Cloneable {
 
             int toVertex = vertexIndexForOsmNode.get(pathNodes[pathNodes.length - 1]);
 
-            final int[] toEdge = new int[] { -1 };
+            final int[] toEdge = new int[]{-1};
             final long toWayId = to.id; // more effectively final nonsense
             outgoingEdges.get(toVertex).forEach(eidx -> {
                 e.seek(eidx);
@@ -914,7 +927,7 @@ public class StreetLayer implements Serializable, Cloneable {
             // now apply to all via ways.
             // > 0 is intentional. pathNodes[0] is the node on the from edge
             for (int nidx = pathNodes.length - 1; nidx > 0; nidx--) {
-                final int[] edge = new int[] { -1 };
+                final int[] edge = new int[]{-1};
                 // fencepost problem: one more node than ways
                 final long wayId = pathWays[nidx - 1]; // more effectively final nonsense
                 int vertex = vertexIndexForOsmNode.get(pathNodes[nidx]);
@@ -960,10 +973,10 @@ public class StreetLayer implements Serializable, Cloneable {
      * There is support for both "only" and "no" turn restrictions in the forward search direction.
      * "only" restrictions are a mess to implement in reverse, so "only" restrictions are converted to (possibly
      * multiple) "no" restrictions when they're reversed.
-     *
+     * <p>
      * These converted restrictions are added to StreetLayer.turnRestrictions (the list of all turn restrictions in
      * the network) and then to EdgeStore.turnRestrictionsReverse (associating them with their toEdge).
-     *
+     * <p>
      * "No" turn restrictions, whether they were originally "no" restrictions or were converted from "only" turn
      * restrictions, are associated with their toEdge (instead of fromEdge) since this method is handling restrictions
      * to be used in reverse searches.
@@ -972,7 +985,7 @@ public class StreetLayer implements Serializable, Cloneable {
         if (turnRestriction.only) {
             // From "only" turn restrictions, create multiple equivalent "no" turn restrictions.
             List<TurnRestriction> remapped = turnRestriction.remap(this);
-            for (TurnRestriction remapped_restriction: remapped) {
+            for (TurnRestriction remapped_restriction : remapped) {
                 index = turnRestrictions.size();
                 turnRestrictions.add(remapped_restriction);
                 edgeStore.turnRestrictionsReverse.put(remapped_restriction.toEdge, index);
@@ -984,6 +997,7 @@ public class StreetLayer implements Serializable, Cloneable {
 
     /**
      * Get or create mapping from a global long OSM ID to an internal street vertex ID, creating the vertex as needed.
+     *
      * @return the internal ID for the street vertex that was found or created, or -1 if there was no such OSM node.
      */
     private int getVertexIndexForOsmNode(long osmNodeId) {
@@ -1008,9 +1022,10 @@ public class StreetLayer implements Serializable, Cloneable {
     /**
      * Calculate length from a list of nodes. This is done in advance of creating an edge pair because we need to catch
      * potential length overflows before we ever reserve space for the edges.
+     *
      * @return the length of the edge in millimeters, or -1 if that length will overflow a 32 bit int
      */
-    private int getEdgeLengthMillimeters (List<Node> nodes) {
+    private int getEdgeLengthMillimeters(List<Node> nodes) {
         double lengthMeters = 0;
         Node prevNode = nodes.get(0);
         for (Node node : nodes.subList(1, nodes.size())) {
@@ -1021,7 +1036,7 @@ public class StreetLayer implements Serializable, Cloneable {
         if (lengthMeters * 1000 > Integer.MAX_VALUE) {
             return -1;
         }
-        return (int)(lengthMeters * 1000);
+        return (int) (lengthMeters * 1000);
     }
 
     private static short speedToShort(Float speed) {
@@ -1054,8 +1069,20 @@ public class StreetLayer implements Serializable, Cloneable {
             nodes.add(node);
         }
 
-        // Compute edge length and check that it can be properly represented.
-        int edgeLengthMillimeters = getEdgeLengthMillimeters(nodes);
+        int edgeLengthMillimeters = 0;
+        try {
+            if (nNodes == 2) {
+                // first see if the network already has lengths defined
+                edgeLengthMillimeters = (int) Math.round(Float.parseFloat(way.getTag("length")) * 1000.0);
+            } else {
+                LOG.warn("OSMNx networks shouldn't have multiple nodes");
+                throw new NotImplementedException("");
+            }
+        } catch (NumberFormatException | NullPointerException | NotImplementedException ex) {
+            // Compute edge length and check that it can be properly represented.
+            edgeLengthMillimeters = getEdgeLengthMillimeters(nodes);
+        }
+
         if (edgeLengthMillimeters < 0) {
             LOG.warn("Street segment was too long to be represented, skipping.");
             return;
@@ -1094,7 +1121,7 @@ public class StreetLayer implements Serializable, Cloneable {
         newEdge.setSpeed(backwardSpeed);
     }
 
-    public void indexStreets () {
+    public void indexStreets() {
         LOG.info("Indexing streets...");
         spatialIndex = new IntHashGrid();
         // Skip by twos, we only need to index forward (even) edges. Their odd companions have the same geometry.
@@ -1115,7 +1142,7 @@ public class StreetLayer implements Serializable, Cloneable {
      * is quite a slow operation. The caller must post-filter the set of edges if more distance information is needed,
      * including knowledge of whether an edge passes inside the query envelope at all.
      */
-    public TIntSet findEdgesInEnvelope (Envelope envelope) {
+    public TIntSet findEdgesInEnvelope(Envelope envelope) {
         TIntSet candidates = spatialIndex.query(envelope);
         // Include temporary edges
         if (temporaryEdgeIndex != null) {
@@ -1155,19 +1182,24 @@ public class StreetLayer implements Serializable, Cloneable {
     /**
      * Find an existing street vertex near the supplied coordinates, or create a new one if there are no vertices
      * near enough. Note that calling this method is potentially destructive (it can modify the street network).
-     *
+     * <p>
      * This uses {@link #findSplit(double, double, double, StreetMode)} and {@link Split} which require the spatial
      * index to already be built. In other works {@link #indexStreets()} needs to be called before this is used.
-     *
+     * <p>
      * TODO potential refactor: rename this method Split.perform(), and store a ref to streetLayer in Split.
-     * @param lat latitude in floating point geographic (not fixed point) degrees.
-     * @param lon longitude in floating point geographic (not fixed point) degrees.
+     *
+     * @param lat        latitude in floating point geographic (not fixed point) degrees.
+     * @param lon        longitude in floating point geographic (not fixed point) degrees.
      * @param streetMode Link to edges which have permission for StreetMode
      * @return the index of a street vertex very close to the supplied location,
-     *         or -1 if no such vertex could be found or created.
+     * or -1 if no such vertex could be found or created.
      */
     public int getOrCreateVertexNear(double lat, double lon, StreetMode streetMode) {
         return getOrCreateVertexNear(lat, lon, streetMode, LINK_RADIUS_METERS);
+    }
+
+    private int scaleInt(int startingValue, double ratio) {
+        return (int) ((double) (startingValue) / ratio);
     }
 
     /**
@@ -1198,6 +1230,10 @@ public class StreetLayer implements Serializable, Cloneable {
             }
         }
 
+        // If the original link was bendy its whole length might not be captured by the straight line end to end
+        // distance. So if that's the case we need to scale up the split distances by the same ratio
+        double linkLengthToStraightLineLength = (double) (split.distance0_mm + split.distance1_mm) / (double) edge.getLengthMm();
+
         // The split is somewhere along a street away from an existing intersection vertex. Make a new splitter vertex.
         int newVertexIndex = vertexStore.addVertexFixed((int) split.fixedLat, (int) split.fixedLon);
         int oldToVertex = edge.getToVertex(); // Hold a copy of the to vertex index, because it may be modified below.
@@ -1207,7 +1243,7 @@ public class StreetLayer implements Serializable, Cloneable {
             // We're either building a baseline graph, or modifying an edge created within the same scenario.
             // Modify the existing bidirectional edge pair to serve as the first segment leading up to the split point.
             // Its spatial index entry is still valid, since the edge's envelope will only shrink.
-            edge.setLengthMm(split.distance0_mm);
+            edge.setLengthMm(scaleInt(split.distance0_mm, linkLengthToStraightLineLength));
             edge.setToVertex(newVertexIndex);
             edge.setGeometry(geoms.a);
         } else {
@@ -1217,7 +1253,8 @@ public class StreetLayer implements Serializable, Cloneable {
             // The new edge will be added to the edge lists later (the edge lists are a transient index).
             // We add it to a temporary spatial index specific to this scenario, rather than the base spatial index
             // which is shared between all scenarios on this network.
-            EdgeStore.Edge newEdge0 = edgeStore.addStreetPair(edge.getFromVertex(), newVertexIndex, split.distance0_mm, edge.getOSMID());
+            EdgeStore.Edge newEdge0 = edgeStore.addStreetPair(edge.getFromVertex(), newVertexIndex,
+                    scaleInt(split.distance0_mm, linkLengthToStraightLineLength), edge.getOSMID());
             // Copy the flags and speeds for both directions, making the new edge like the existing one.
             newEdge0.copyPairFlagsAndSpeeds(edge);
             newEdge0.setGeometry(geoms.a);
@@ -1234,7 +1271,8 @@ public class StreetLayer implements Serializable, Cloneable {
         }
         // Make a new bidirectional edge pair for the segment after the split.
         // The new edge will be added to the edge lists later (the edge lists are a transient index).
-        EdgeStore.Edge newEdge1 = edgeStore.addStreetPair(newVertexIndex, oldToVertex, split.distance1_mm, edge.getOSMID());
+        EdgeStore.Edge newEdge1 = edgeStore.addStreetPair(newVertexIndex, oldToVertex, scaleInt(split.distance1_mm,
+                linkLengthToStraightLineLength), edge.getOSMID());
         // Copy the flags and speeds for both directions, making newEdge1 like the existing edge.
         newEdge1.copyPairFlagsAndSpeeds(edge);
         newEdge1.setGeometry(geoms.b);
@@ -1276,7 +1314,7 @@ public class StreetLayer implements Serializable, Cloneable {
         }
 
         // The split is somewhere away from an existing intersection vertex. Make a new vertex.
-        int newVertexIndex = vertexStore.addVertexFixed((int)split.fixedLat, (int)split.fixedLon);
+        int newVertexIndex = vertexStore.addVertexFixed((int) split.fixedLat, (int) split.fixedLon);
 
         // Modify the existing bidirectional edge pair to lead up to the split.
         // Its spatial index entry is still valid, its envelope has only shrunk.
@@ -1314,16 +1352,17 @@ public class StreetLayer implements Serializable, Cloneable {
      * reused. So in sum, this will create one or two new vertices, and all necessary edge pairs to properly connect
      * these new vertices.
      * TODO store street-to-stop distance in a table in TransitLayer, or change the link edge length. This also allows adjusting for subway entrances etc.
+     *
      * @return the vertex of the newly created vertex at the supplied coordinates.
      */
-    public int createAndLinkVertex (double lat, double lon) {
+    public int createAndLinkVertex(double lat, double lon) {
         return createAndLinkVertex(lat, lon, LINK_RADIUS_METERS);
     }
 
     /**
      * Added for BEAM to pass arbitrary linkRadiusMeters value.
      */
-    public int createAndLinkVertex (double lat, double lon, double linkRadiusMeters) {
+    public int createAndLinkVertex(double lat, double lon, double linkRadiusMeters) {
         int stopVertex = vertexStore.addVertex(lat, lon);
         int streetVertexIndex = getOrCreateVertexNear(lat, lon, StreetMode.WALK, linkRadiusMeters);
         if (streetVertexIndex == -1) {
@@ -1331,7 +1370,7 @@ public class StreetLayer implements Serializable, Cloneable {
         }
 
         VertexStore.Vertex streetVertex = vertexStore.getCursor(streetVertexIndex);
-        int length_mm = (int) (GeometryUtils.distance(lat,lon, streetVertex.getLat(), streetVertex.getLon())*1000);
+        int length_mm = (int) (GeometryUtils.distance(lat, lon, streetVertex.getLat(), streetVertex.getLon()) * 1000);
         // Set OSM way ID is -1 because this edge is not derived from any OSM way.
         Edge e = edgeStore.addStreetPair(stopVertex, streetVertexIndex, length_mm, -1);
 
@@ -1351,11 +1390,12 @@ public class StreetLayer implements Serializable, Cloneable {
      * This function starts with a small search envelope and expands it as needed under the assumption that most
      * search points will be close to a road.
      * TODO favor transit station platforms and pedestrian paths when requested
-     * @param lat latitude in floating point geographic coordinates (not fixed point int coordinates)
-     * @param lon longitude in floating point geographic coordinates (not fixed point int coordinates)
-*      @param streetMode a mode of travel that the street must allow
+     *
+     * @param lat        latitude in floating point geographic coordinates (not fixed point int coordinates)
+     * @param lon        longitude in floating point geographic coordinates (not fixed point int coordinates)
+     * @param streetMode a mode of travel that the street must allow
      * @return a Split object representing a point along a sub-segment of a specific edge, or null if there are no
-     *         streets nearby allowing the specified mode of travel.
+     * streets nearby allowing the specified mode of travel.
      */
     public Split findSplit(double lat, double lon, double radiusMeters, StreetMode streetMode) {
         Split split = null;
@@ -1375,14 +1415,14 @@ public class StreetLayer implements Serializable, Cloneable {
      * For every stop in a TransitLayer, find or create a nearby vertex in the street layer and record the connection
      * between the two.
      */
-    public void associateStops (TransitLayer transitLayer) {
+    public void associateStops(TransitLayer transitLayer) {
         associateStops(transitLayer, LINK_RADIUS_METERS);
     }
 
     /**
      * Added for BEAM to pass arbitrary linkRadiusMeters value.
      */
-    public void associateStops (TransitLayer transitLayer, double linkRadiusMeters) {
+    public void associateStops(TransitLayer transitLayer, double linkRadiusMeters) {
         for (Stop stop : transitLayer.stopForIndex) {
             int stopVertex = createAndLinkVertex(stop.stop_lat, stop.stop_lon, linkRadiusMeters);
             transitLayer.streetVertexForStop.add(stopVertex); // This is always a valid, unique vertex index.
@@ -1402,10 +1442,11 @@ public class StreetLayer implements Serializable, Cloneable {
      * We intentionally avoid using clone() on EdgeStore and VertexStore so all field copying is explicit and we can
      * clearly see whether we are accidentally shallow-copying any collections or data structures from the base graph.
      * StreetLayer has a lot more fields and most of them can be shallow-copied, so here we use clone() for convenience.
+     *
      * @param willBeModified must be true if the scenario to be applied will make any changes to the new StreetLayer
      *                       copy. This allows some optimizations (the lists in the StreetLayer will not be wrapped).
      * @return a copy of this StreetLayer to which Scenarios can be applied without affecting the original StreetLayer.
-     *
+     * <p>
      * It's questionable whether the willBeModified optimization actually affects routing speed, but in theory it
      * saves a comparison and an extra dereference every time we use the edge/vertex stores.
      * TODO check whether this actually affects speed. If not, just wrap the lists in every scenario copy.
@@ -1441,7 +1482,7 @@ public class StreetLayer implements Serializable, Cloneable {
         bikeRentalStationMap = new TIntObjectHashMap<>(bikeRentalStations.size());
         LOG.info("Bike rental stations:{}", bikeRentalStations.size());
         int numAddedStations = 0;
-        for (BikeRentalStation bikeRentalStation: bikeRentalStations) {
+        for (BikeRentalStation bikeRentalStation : bikeRentalStations) {
             int streetVertexIndex = getOrCreateVertexNear(bikeRentalStation.lat, bikeRentalStation.lon, StreetMode.WALK);
             if (streetVertexIndex > -1) {
                 numAddedStations++;
@@ -1453,11 +1494,11 @@ public class StreetLayer implements Serializable, Cloneable {
         if (numAddedStations > 0) {
             this.bikeSharing = true;
         }
-        LOG.info("Added {} out of {} stations ratio:{}", numAddedStations, bikeRentalStations.size(), numAddedStations/bikeRentalStations.size());
+        LOG.info("Added {} out of {} stations ratio:{}", numAddedStations, bikeRentalStations.size(), numAddedStations / bikeRentalStations.size());
 
     }
 
-    public StreetLayer clone () {
+    public StreetLayer clone() {
         try {
             return (StreetLayer) super.clone();
         } catch (CloneNotSupportedException e) {
@@ -1486,7 +1527,7 @@ public class StreetLayer implements Serializable, Cloneable {
             edge.seek(e);
             Envelope envelope = edge.getEnvelope();
             GeometryUtils.expandEnvelopeFixed(envelope, radiusMeters);
-            geoms.add((Polygon)GeometryUtils.geometryFactory.toGeometry(envelope));
+            geoms.add((Polygon) GeometryUtils.geometryFactory.toGeometry(envelope));
         });
         // We can't just make a multipolygon as the component polygons may not be disjoint. Unions are pretty quick though.
         // The UnaryUnionOp gets its geometryFactory from the geometries it's operating on.
@@ -1499,8 +1540,8 @@ public class StreetLayer implements Serializable, Cloneable {
     /**
      * Given a JTS Geometry in fixed-point latitude and longitude, log it as floating-point GeoJSON.
      */
-    public static void logFixedPointGeometry (String label, Geometry fixedPointGeometry) {
-        if (fixedPointGeometry == null){
+    public static void logFixedPointGeometry(String label, Geometry fixedPointGeometry) {
+        if (fixedPointGeometry == null) {
             LOG.info("{} is null.", label);
         } else if (fixedPointGeometry.isEmpty()) {
             LOG.info("{} is empty.", label);
@@ -1561,12 +1602,12 @@ public class StreetLayer implements Serializable, Cloneable {
                 e.seek(eidx);
                 //TODO: for now bikeshares aren't connected with link edges to the graph
                 //if (e.getFlag(EdgeStore.EdgeFlag.LINK)) {
-                    v.seek(e.getFromVertex());
+                v.seek(e.getFromVertex());
 
-                    if (v.getFlag(VertexStore.VertexFlag.BIKE_SHARING)) {
-                        BikeRentalStation bikeRentalStation = bikeRentalStationMap.get(e.getFromVertex());
-                        bikeRentalStations.add(bikeRentalStation);
-                    }
+                if (v.getFlag(VertexStore.VertexFlag.BIKE_SHARING)) {
+                    BikeRentalStation bikeRentalStation = bikeRentalStationMap.get(e.getFromVertex());
+                    bikeRentalStations.add(bikeRentalStation);
+                }
                 //}
                 return true;
             });
@@ -1580,7 +1621,7 @@ public class StreetLayer implements Serializable, Cloneable {
      * @param lon longitude the starting point in floating point degrees
      * @return the waiting time in seconds to begin driving on the street network (waiting to be picked up by a car)
      */
-    public int getWaitTime (double lat, double lon) {
+    public int getWaitTime(double lat, double lon) {
         if (waitTimePolygons == null) {
             return 0;
         } else {
@@ -1588,7 +1629,7 @@ public class StreetLayer implements Serializable, Cloneable {
             Point point = GeometryUtils.geometryFactory.createPoint(new Coordinate(lon, lat));
             ModificationPolygon polygon = waitTimePolygons.getWinningPolygon(point);
             // Convert minutes to seconds
-            return (int)(polygon.data * 60);
+            return (int) (polygon.data * 60);
         }
     }
 
