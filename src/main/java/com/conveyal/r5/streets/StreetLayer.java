@@ -1198,10 +1198,6 @@ public class StreetLayer implements Serializable, Cloneable {
         return getOrCreateVertexNear(lat, lon, streetMode, LINK_RADIUS_METERS);
     }
 
-    private int scaleInt(int startingValue, double ratio) {
-        return (int) ((double) (startingValue) / ratio);
-    }
-
     /**
      * Added for BEAM to pass arbitrary linkRadiusMeters value.
      */
@@ -1230,10 +1226,6 @@ public class StreetLayer implements Serializable, Cloneable {
             }
         }
 
-        // If the original link was bendy its whole length might not be captured by the straight line end to end
-        // distance. So if that's the case we need to scale up the split distances by the same ratio
-        double linkLengthToStraightLineLength = (double) (split.distance0_mm + split.distance1_mm) / (double) edge.getLengthMm();
-
         // The split is somewhere along a street away from an existing intersection vertex. Make a new splitter vertex.
         int newVertexIndex = vertexStore.addVertexFixed((int) split.fixedLat, (int) split.fixedLon);
         int oldToVertex = edge.getToVertex(); // Hold a copy of the to vertex index, because it may be modified below.
@@ -1243,7 +1235,7 @@ public class StreetLayer implements Serializable, Cloneable {
             // We're either building a baseline graph, or modifying an edge created within the same scenario.
             // Modify the existing bidirectional edge pair to serve as the first segment leading up to the split point.
             // Its spatial index entry is still valid, since the edge's envelope will only shrink.
-            edge.setLengthMm(scaleInt(split.distance0_mm, linkLengthToStraightLineLength));
+            edge.setLengthMm(split.distance0_mm);
             edge.setToVertex(newVertexIndex);
             edge.setGeometry(geoms.a);
         } else {
@@ -1253,8 +1245,7 @@ public class StreetLayer implements Serializable, Cloneable {
             // The new edge will be added to the edge lists later (the edge lists are a transient index).
             // We add it to a temporary spatial index specific to this scenario, rather than the base spatial index
             // which is shared between all scenarios on this network.
-            EdgeStore.Edge newEdge0 = edgeStore.addStreetPair(edge.getFromVertex(), newVertexIndex,
-                    scaleInt(split.distance0_mm, linkLengthToStraightLineLength), edge.getOSMID());
+            EdgeStore.Edge newEdge0 = edgeStore.addStreetPair(edge.getFromVertex(), newVertexIndex,split.distance0_mm, edge.getOSMID());
             // Copy the flags and speeds for both directions, making the new edge like the existing one.
             newEdge0.copyPairFlagsAndSpeeds(edge);
             newEdge0.setGeometry(geoms.a);
@@ -1271,8 +1262,7 @@ public class StreetLayer implements Serializable, Cloneable {
         }
         // Make a new bidirectional edge pair for the segment after the split.
         // The new edge will be added to the edge lists later (the edge lists are a transient index).
-        EdgeStore.Edge newEdge1 = edgeStore.addStreetPair(newVertexIndex, oldToVertex, scaleInt(split.distance1_mm,
-                linkLengthToStraightLineLength), edge.getOSMID());
+        EdgeStore.Edge newEdge1 = edgeStore.addStreetPair(newVertexIndex, oldToVertex, split.distance1_mm, edge.getOSMID());
         // Copy the flags and speeds for both directions, making newEdge1 like the existing edge.
         newEdge1.copyPairFlagsAndSpeeds(edge);
         newEdge1.setGeometry(geoms.b);
