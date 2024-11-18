@@ -75,7 +75,7 @@ public class IntHashGrid implements Serializable {
 
     /** Create a HashGrid with the default grid dimensions. */
     public IntHashGrid() {
-        this(0.0018); // About 200m
+        this(0.003); // Increased to avoid visitingTooManyCells error
     }
 
 
