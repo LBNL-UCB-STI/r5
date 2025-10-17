@@ -51,6 +51,8 @@ public class StreetRouter {
     /** A special value for the search target vertex: do not stop the search at any particular vertex. */
     public static final int ALL_VERTICES = -1;
 
+    private final StatePool statePool = new StatePool(5000);
+
     /** The StreetLayer to route on. */
     public final StreetLayer streetLayer;
 
@@ -605,14 +607,23 @@ public class StreetRouter {
             // explore edges leaving this vertex
             edgeList.forEach(eidx -> {
                 edge.seek(eidx);
-                State s1 = edge.traverse(s0, streetMode, profileRequest, turnCostCalculator, travelTimeCalculator, travelCostCalculator);
-                if (s1 != null && s1.distance <= distanceLimitMm && s1.getDurationSeconds() < tmpTimeLimitSeconds) {
-                    if (!isDominated(s1)) {
-                        // Calculate the heuristic (which involves a square root) only when the state is retained.
-                        s1.heuristic = calcHeuristic(s1);
-                        bestStatesAtEdge.put(s1.backEdge, s1);
-                        queue.add(s1);
+                State s1 = statePool.borrow();
+                // traverseInto returns a boolean indicating whether a valid state was produced.
+                if (edge.traverseInto(s1, s0, streetMode, profileRequest, turnCostCalculator, travelTimeCalculator, travelCostCalculator)) {
+                    if (s1.distance <= distanceLimitMm && s1.getDurationSeconds() < tmpTimeLimitSeconds) {
+                        if (!isDominated(s1)) {
+                            // Calculate the heuristic (which involves a square root) only when the state is retained.
+                            s1.heuristic = calcHeuristic(s1);
+                            bestStatesAtEdge.put(s1.backEdge, s1);
+                            queue.add(s1);
+                        } else {
+                            statePool.returnState(s1);
+                        }
+                    } else {
+                        statePool.returnState(s1);
                     }
+                } else {
+                    statePool.returnState(s1);
                 }
                 return true; // Iteration over the edge list should continue.
             });
@@ -620,6 +631,7 @@ public class StreetRouter {
         if (DEBUG_OUTPUT) {
             debugPrintStream.close();
         }
+        statePool.reset();
         long routingTimeMsec = System.currentTimeMillis() - startTime;
         LOG.debug("Routing took {} msec", routingTimeMsec);
     }
@@ -903,6 +915,26 @@ public class StreetRouter {
             this.durationFromOriginSeconds = 0;
             this.idx = 0;
         }
+
+        public State() {
+            this.reset();
+        }
+
+        void reset() {
+            this.vertex = -1;
+            this.backEdge = -1;
+            this.weight = 0;
+            this.durationSeconds = 0;
+            this.distance = 0;
+            this.heuristic = 0;
+            this.streetMode = null;
+            this.isBikeShare = false;
+            this.backState = null;
+            this.durationFromOriginSeconds = 0;
+            this.idx = 0;
+            this.turnRestrictions = null;
+        }
+
 
         protected State clone() {
             State ret;

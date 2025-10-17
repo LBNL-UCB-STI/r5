@@ -566,6 +566,16 @@ public class EdgeStore implements Serializable {
 
         public StreetRouter.State traverse (StreetRouter.State s0, StreetMode streetMode, ProfileRequest req,
                                             TurnCostCalculator turnCostCalculator, TravelTimeCalculator travelTimeCalculator, TravelCostCalculator travelCostCalculator) {
+            StreetRouter.State s1 = new StreetRouter.State();
+            if (traverseInto(s1, s0, streetMode, req, turnCostCalculator, travelTimeCalculator, travelCostCalculator)) {
+                return s1;
+            } else {
+                return null;
+            }
+        }
+
+        public boolean traverseInto (StreetRouter.State s1, StreetRouter.State s0, StreetMode streetMode, ProfileRequest req,
+            TurnCostCalculator turnCostCalculator, TravelTimeCalculator travelTimeCalculator, TravelCostCalculator travelCostCalculator) {
 
             // The vertex we'll be at after the traversal
             int vertex;
@@ -575,11 +585,19 @@ public class EdgeStore implements Serializable {
                 vertex = getToVertex();
             }
 
-            StreetRouter.State s1 = new StreetRouter.State(vertex, edgeIndex, s0);
+            s1.vertex = vertex;
+            s1.backEdge = edgeIndex;
+            s1.backState = s0;
+            s1.distance = s0.distance;
+            s1.durationSeconds = s0.durationSeconds;
+            s1.durationFromOriginSeconds = s0.durationFromOriginSeconds;
+            s1.weight = s0.weight;
+            s1.idx = s0.idx + 1;
+
             float time = travelTimeCalculator.getTravelTimeSeconds(this, s0.durationSeconds, streetMode, req);
             float weight = 0;
 
-            if (!canTurnFrom(s0, s1, req.reverseSearch)) return null;
+            if (!canTurnFrom(s0, s1, req.reverseSearch)) return false;
 
             // clear out turn restrictions if they're empty
             if (s1.turnRestrictions != null && s1.turnRestrictions.isEmpty()) s1.turnRestrictions = null;
@@ -593,7 +611,7 @@ public class EdgeStore implements Serializable {
             //Since backEdges are set from first part of multipart P+R search
             if ((s0.backEdge >=0 ) && (s0.backState != null) && getFlag(EdgeFlag.LINK) && getCursor(s0.backEdge).getFlag(EdgeFlag.LINK))
                 // two link edges in a row, in other words a shortcut. Disallow this.
-                return null;
+                return false;
 
             //Currently weigh is basically the same as weight. It differs only on stairs and when walking.
 
@@ -602,7 +620,7 @@ public class EdgeStore implements Serializable {
                 weight = time;
                 //If wheelchair path is requested and this edge doesn't allow wheelchairs we need to find another edge
                 if (req.wheelchair && !getFlag(EdgeFlag.ALLOWS_WHEELCHAIR)) {
-                    return null;
+                    return false;
                 }
                 //elevation which changes weight
             } else if (streetMode == StreetMode.BICYCLE) {
@@ -627,7 +645,7 @@ public class EdgeStore implements Serializable {
                 // TODO bike walking costs when switching bikes
 
                 // only walk if you're allowed to
-                if (walking && !getFlag(EdgeFlag.ALLOWS_PEDESTRIAN)) return null;
+                if (walking && !getFlag(EdgeFlag.ALLOWS_PEDESTRIAN)) return false;
 
                 if (walking) {
                     //TODO: set bike walking in state
@@ -641,7 +659,7 @@ public class EdgeStore implements Serializable {
             } else if (streetMode == StreetMode.CAR && getFlag(EdgeFlag.ALLOWS_CAR)) {
                 weight = travelCostCalculator.getGeneralizedTravelCost(this, s0.durationSeconds, time);
             } else {
-                return null; // this mode cannot traverse this edge
+                return false; // this mode cannot traverse this edge
             }
 
             if(getFlag(EdgeFlag.STAIRS)) {
@@ -672,7 +690,7 @@ public class EdgeStore implements Serializable {
             if (s1.durationSeconds == s0.durationSeconds) s1.incrementTimeInSeconds(1);
             if (s1.distance == s0.distance) s1.distance += 1;
 
-            return s1;
+            return true;
         }
 
         /** Can we turn onto this edge from this state? Also copies still-applicable restrictions forward. */
