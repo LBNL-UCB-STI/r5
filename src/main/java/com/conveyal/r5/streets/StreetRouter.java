@@ -239,8 +239,14 @@ public class StreetRouter {
             if (eidx < 0) return true;
             // Iterating over a little list and reducing the values with a stream might be slow.
             // TODO We should try replacing this with states.get(0) and see if it makes building distance tables faster.
-            State state = states.stream()
-                    .reduce((s0, s1) -> s0.getRoutingVariable(quantityToMinimize) < s1.getRoutingVariable(quantityToMinimize) ? s0 : s1).get();
+            Iterator<State> it = states.iterator();
+            State state = it.next();
+            while (it.hasNext()) {
+                State candidate = it.next();
+                if (candidate.getRoutingVariable(quantityToMinimize) < state.getRoutingVariable(quantityToMinimize)) {
+                    state = candidate;
+                }
+            }
             e.seek(eidx);
             int vidx = e.getToVertex();
 
@@ -272,8 +278,14 @@ public class StreetRouter {
         bestStatesAtEdge.forEachEntry((eidx, states) -> {
             if (eidx < 0) return true;
 
-            State state = states.stream().reduce((s0, s1) ->
-                    s0.getRoutingVariable(quantityToMinimize) < s1.getRoutingVariable(quantityToMinimize) ? s0 : s1).get();
+            Iterator<State> it = states.iterator();
+            State state = it.next();
+            while (it.hasNext()) {
+                State candidate = it.next();
+                if (candidate.getRoutingVariable(quantityToMinimize) < state.getRoutingVariable(quantityToMinimize)) {
+                    state = candidate;
+                }
+            }
             e.seek(eidx);
             int vidx = e.getToVertex();
             v.seek(vidx);
@@ -723,8 +735,15 @@ public class StreetRouter {
             return null; // Unreachable
         }
         // Get the lowest weight, even if it's in the middle of a turn restriction.
-        return states.stream().reduce((s0, s1) ->
-                s0.getRoutingVariable(quantityToMinimize) < s1.getRoutingVariable(quantityToMinimize) ? s0 : s1).get();
+        Iterator<State> it = states.iterator();
+        State state = it.next();
+        while (it.hasNext()) {
+            State candidate = it.next();
+            if (candidate.getRoutingVariable(quantityToMinimize) < state.getRoutingVariable(quantityToMinimize)) {
+                state = candidate;
+            }
+        }
+        return state;
     }
 
     /**
@@ -835,9 +854,17 @@ public class StreetRouter {
                     .forEach(relevantStates::add);
         }
 
-        return relevantStates.stream()
-                .reduce((s0, s1) -> s0.getRoutingVariable(quantityToMinimize) < s1.getRoutingVariable(quantityToMinimize) ? s0 : s1)
-                .orElse(null);
+        if (relevantStates.isEmpty()) {
+            return null;
+        }
+        State state = relevantStates.get(0);
+        for (int i = 1; i < relevantStates.size(); i++) {
+            State candidate = relevantStates.get(i);
+            if (candidate.getRoutingVariable(quantityToMinimize) < state.getRoutingVariable(quantityToMinimize)) {
+                state = candidate;
+            }
+        }
+        return state;
     }
 
     public Split getDestinationSplit() {
