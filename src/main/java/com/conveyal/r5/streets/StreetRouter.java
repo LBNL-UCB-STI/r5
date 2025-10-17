@@ -346,6 +346,7 @@ public class StreetRouter {
         originSplit = split;
         bestStatesAtEdge.clear();
         queue.clear();
+        statePool.reset();
         // The states are located at the end of edges. Vertex0 is at the end of the reverse edge (split.edge + 1).
         // In these states we must specify which edge was traversed to reach them, so that turn costs work.
         State startState0 = new State(split.vertex0, split.edge + 1, streetMode);
@@ -391,6 +392,7 @@ public class StreetRouter {
     public void setOrigin (int fromVertex) {
         bestStatesAtEdge.clear();
         queue.clear();
+        statePool.reset();
 
         // sets maximal absolute origin latitude used for goal direction heuristic
         VertexStore.Vertex vertex = streetLayer.vertexStore.getCursor(fromVertex);
@@ -415,6 +417,7 @@ public class StreetRouter {
     public void setOrigin(TIntObjectMap<State> previousStates, int switchTime, int switchCost, LegMode legMode) {
         bestStatesAtEdge.clear();
         queue.clear();
+        statePool.reset();
         //Maximal origin latitude is used in goal direction heuristic.
         final int[] maxOriginLatArr = { Integer.MIN_VALUE };
 
@@ -643,7 +646,6 @@ public class StreetRouter {
         if (DEBUG_OUTPUT) {
             debugPrintStream.close();
         }
-        statePool.reset();
         long routingTimeMsec = System.currentTimeMillis() - startTime;
         LOG.debug("Routing took {} msec", routingTimeMsec);
     }
@@ -944,7 +946,7 @@ public class StreetRouter {
         }
 
         public State() {
-            this.reset();
+            // Default constructor for state pool
         }
 
         void reset() {
@@ -962,6 +964,18 @@ public class StreetRouter {
             this.turnRestrictions = null;
         }
 
+        public void setFrom(State s0, int vertex, int edgeIndex) {
+            this.vertex = vertex;
+            this.backEdge = edgeIndex;
+            this.backState = s0;
+            this.distance = s0.distance;
+            this.durationSeconds = s0.durationSeconds;
+            this.durationFromOriginSeconds = s0.durationFromOriginSeconds;
+            this.weight = s0.weight;
+            this.idx = s0.idx + 1;
+        }
+
+
 
         protected State clone() {
             State ret;
@@ -969,6 +983,9 @@ public class StreetRouter {
                 ret = (State) super.clone();
             } catch (CloneNotSupportedException e) {
                 throw new IllegalStateException("This is not happening");
+            }
+            if (this.turnRestrictions != null) {
+                ret.turnRestrictions = new TIntIntHashMap(this.turnRestrictions);
             }
             return ret;
         }
