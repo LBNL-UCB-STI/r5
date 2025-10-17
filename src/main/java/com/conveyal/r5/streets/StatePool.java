@@ -8,12 +8,10 @@ import java.util.Set;
 class StatePool {
     private final List<StreetRouter.State> available;
     private final Set<StreetRouter.State> inUse;
-    private final int maxSize;
 
     StatePool(int initialCapacity) {
         this.available = new ArrayList<>(initialCapacity);
         this.inUse = new HashSet<>(initialCapacity);
-        this.maxSize = initialCapacity * 100;
 
         // Pre-populate with initial states
         for (int i = 0; i < initialCapacity; i++) {
@@ -24,11 +22,7 @@ class StatePool {
     StreetRouter.State borrow() {
         StreetRouter.State s;
         if (available.isEmpty()) {
-            if (inUse.size() < maxSize) {
-                s = new StreetRouter.State();  // Create new if under limit
-            } else {
-                throw new IllegalStateException("State pool exhausted");
-            }
+            s = new StreetRouter.State();  // No max limit
         } else {
             s = available.remove(available.size() - 1);
         }

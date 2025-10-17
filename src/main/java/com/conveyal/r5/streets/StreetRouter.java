@@ -51,7 +51,7 @@ public class StreetRouter {
     /** A special value for the search target vertex: do not stop the search at any particular vertex. */
     public static final int ALL_VERTICES = -1;
 
-    private final StatePool statePool = new StatePool(10000);
+    private final StatePool statePool = new StatePool(5000);
 
     /** The StreetLayer to route on. */
     public final StreetLayer streetLayer;
@@ -349,7 +349,6 @@ public class StreetRouter {
         originSplit = split;
         bestStatesAtEdge.clear();
         queue.clear();
-        statePool.reset();
         // The states are located at the end of edges. Vertex0 is at the end of the reverse edge (split.edge + 1).
         // In these states we must specify which edge was traversed to reach them, so that turn costs work.
         State startState0 = new State(split.vertex0, split.edge + 1, streetMode);
@@ -446,6 +445,30 @@ public class StreetRouter {
         });
         maxAbsOriginLat = maxOriginLatArr[0];
 
+    }
+
+    public void reset() {
+        bestStatesAtEdge.clear();
+        queue.clear();
+        statePool.reset();
+
+        // Reset all search state
+        toVertex = ALL_VERTICES;
+        bestValueAtDestination = Integer.MAX_VALUE;
+        maxAbsOriginLat = Integer.MIN_VALUE;
+        originSplit = null;
+        destinationSplit = null;
+        transitStopSearch = false;
+        flagSearch = null;
+        routingVisitor = null;
+        previousRouter = null;
+
+        // Keep these as they're set before each search anyway:
+        // - distanceLimitMeters
+        // - timeLimitSeconds
+        // - quantityToMinimize
+        // - profileRequest
+        // - streetMode
     }
 
     /**
