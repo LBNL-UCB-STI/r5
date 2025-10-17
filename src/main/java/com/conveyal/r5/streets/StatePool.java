@@ -13,7 +13,7 @@ class StatePool {
     StatePool(int initialCapacity) {
         this.available = new ArrayList<>(initialCapacity);
         this.inUse = new HashSet<>(initialCapacity);
-        this.maxSize = initialCapacity * 10;
+        this.maxSize = initialCapacity * 100;
 
         // Pre-populate with initial states
         for (int i = 0; i < initialCapacity; i++) {

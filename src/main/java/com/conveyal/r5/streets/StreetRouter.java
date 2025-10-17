@@ -51,7 +51,7 @@ public class StreetRouter {
     /** A special value for the search target vertex: do not stop the search at any particular vertex. */
     public static final int ALL_VERTICES = -1;
 
-    private final StatePool statePool = new StatePool(5000);
+    private final StatePool statePool = new StatePool(10000);
 
     /** The StreetLayer to route on. */
     public final StreetLayer streetLayer;
