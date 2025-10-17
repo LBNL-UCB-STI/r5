@@ -204,6 +204,13 @@ public class StreetRouter {
         this.routingVisitor = routingVisitor;
     }
 
+    public String getStatePoolStats() {
+        return String.format("size=%d,available=%d,inUse=%d",
+                statePool.getPoolSize(),
+                statePool.getAvailableCount(),
+                statePool.getPoolSize() - statePool.getAvailableCount());
+    }
+
     /**
      * After a search has been run, calling this method will returns a map from transit stop indexes to the value of
      * the objective variable for the optimal path to that stop. TransitLayer contains the information about which
