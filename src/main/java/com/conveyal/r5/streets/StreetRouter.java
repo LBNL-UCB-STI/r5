@@ -155,7 +155,9 @@ public class StreetRouter {
 
     // The queue is prioritized by the specified optimization objective variable.
     PriorityQueue<State> queue = new PriorityQueue<>(
-            Comparator.comparingInt(s0 -> (s0.getRoutingVariable(quantityToMinimize) + s0.heuristic)));
+            Comparator.comparingInt((State s0) -> s0.getRoutingVariable(quantityToMinimize) + s0.heuristic)
+    );
+
 
     /**
      * If you set this to a non-negative number, the search will end at the vertex with the given index,
@@ -307,6 +309,7 @@ public class StreetRouter {
     }
 
     public StreetRouter (StreetLayer streetLayer, TravelTimeCalculator travelTimeCalculator, TurnCostCalculator turnCostCalculator, TravelCostCalculator travelCostCalculator) {
+        statePool.reset(); // Clear any leaked states from previous use
         this.streetLayer = streetLayer;
         // TODO one of two things: 1) don't hardwire drive-on-right, or 2) https://en.wikipedia.org/wiki/Dagen_H
         this.turnCostCalculator = turnCostCalculator;
@@ -655,21 +658,22 @@ public class StreetRouter {
      * same edge. Side effect: Boot out any existing states that are dominated by the new one.
      */
     private boolean isDominated(State newState) {
-        // States in turn restrictions are incomparable (don't dominate and aren't dominated by other states)
-        // If the new state is not in a turn restriction, check whether it dominates any existing states and remove them.
-        // Multimap returns empty list for missing keys.
-        for (Iterator<State> it = bestStatesAtEdge.get(newState.backEdge).iterator(); it.hasNext(); ) {
+        Collection<State> states = bestStatesAtEdge.get(newState.backEdge);
+        if (states == null || states.isEmpty()) {
+            return false;
+        }
+
+        Iterator<State> it = states.iterator();
+        while (it.hasNext()) {
             State existingState = it.next();
             if (dominates(existingState, newState)) {
-                // If any existing state dominates the new one, bail out early and declare the new state dominated.
-                // We want to check if the existing state dominates the new one before the other way around because
-                // when states are equal, the existing one should win (and the special case for turn restrictions).
-                return true;
+                return true;  // Can return immediately
             } else if (dominates(newState, existingState)) {
-                it.remove();
+                it.remove();  // Remove directly via iterator - no garbage
             }
         }
-        return false; // Nothing existing has dominated this new state: it's non-dominated.
+
+        return false;
     }
 
     /**
@@ -805,6 +809,7 @@ public class StreetRouter {
         }
         for (TIntIterator it = edgeList.iterator(); it.hasNext();) {
             Collection<State> states = bestStatesAtEdge.get(it.next());
+            if (states == null || states.isEmpty()) continue;
             // NB this needs a state to copy turn restrictions into. We then don't use that state, which is fine because
             // we don't need the turn restrictions any more because we're at the end of the search
             states.stream().filter(s -> e.canTurnFrom(s, new State(-1, split.edge, s), profileRequest.reverseSearch))
@@ -837,6 +842,7 @@ public class StreetRouter {
 
         for (TIntIterator it = edgeList.iterator(); it.hasNext();) {
             Collection<State> states = bestStatesAtEdge.get(it.next());
+            if (states == null || states.isEmpty()) continue;
             states.stream().filter(s -> e.canTurnFrom(s, new State(-1, split.edge + 1, s), profileRequest.reverseSearch))
                     .map(s -> {
                         State ret = new State(-1, split.edge + 1, s);

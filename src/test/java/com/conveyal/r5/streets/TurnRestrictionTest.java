@@ -94,8 +94,7 @@ public class TurnRestrictionTest extends TurnTest {
 
 
         //Same reverse search
-        new StreetRouter(streetLayer);
-        // turn restrictions only apply to cars
+        r = new StreetRouter(streetLayer);  // ← Assign to r
         r.streetMode = StreetMode.CAR;
         r.profileRequest.reverseSearch = true;
         r.setOrigin(vw);
