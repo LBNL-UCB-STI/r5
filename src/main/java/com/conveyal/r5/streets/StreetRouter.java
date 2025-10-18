@@ -51,7 +51,7 @@ public class StreetRouter {
     /** A special value for the search target vertex: do not stop the search at any particular vertex. */
     public static final int ALL_VERTICES = -1;
 
-    private final StatePool statePool = new StatePool(5000);
+    private final StatePool statePool;
 
     /** The StreetLayer to route on. */
     public final StreetLayer streetLayer;
@@ -312,10 +312,34 @@ public class StreetRouter {
     }
 
     public StreetRouter (StreetLayer streetLayer) {
-        this(streetLayer, new EdgeStore.DefaultTravelTimeCalculator(), new TurnCostCalculator(streetLayer, true), new EdgeStore.DefaultTravelCostCalculator());
+        this(streetLayer, 5000);
+    }
+
+    /**
+     * Create a StreetRouter with a specific initial capacity for the state pool.
+     * @param streetLayer The street layer to route on.
+     * @param initialCapacity The initial capacity of the state pool.
+     */
+    public StreetRouter(StreetLayer streetLayer, int initialCapacity) {
+        this(streetLayer, initialCapacity, 20000);
+    }
+
+    /**
+     * Create a StreetRouter with a specific initial capacity and max size for the state pool.
+     * @param streetLayer The street layer to route on.
+     * @param initialCapacity The initial capacity of the state pool.
+     * @param maxSize The maximum size of the state pool.
+     */
+    public StreetRouter(StreetLayer streetLayer, int initialCapacity, int maxSize) {
+        this(streetLayer, new EdgeStore.DefaultTravelTimeCalculator(), new TurnCostCalculator(streetLayer, true), new EdgeStore.DefaultTravelCostCalculator(), initialCapacity, maxSize);
     }
 
     public StreetRouter (StreetLayer streetLayer, TravelTimeCalculator travelTimeCalculator, TurnCostCalculator turnCostCalculator, TravelCostCalculator travelCostCalculator) {
+        this(streetLayer, travelTimeCalculator, turnCostCalculator, travelCostCalculator, 5000, 20000);
+    }
+
+    public StreetRouter (StreetLayer streetLayer, TravelTimeCalculator travelTimeCalculator, TurnCostCalculator turnCostCalculator, TravelCostCalculator travelCostCalculator, int initialCapacity, int maxSize) {
+        this.statePool = new StatePool(initialCapacity, maxSize);
         statePool.reset(); // Clear any leaked states from previous use
         this.streetLayer = streetLayer;
         // TODO one of two things: 1) don't hardwire drive-on-right, or 2) https://en.wikipedia.org/wiki/Dagen_H
