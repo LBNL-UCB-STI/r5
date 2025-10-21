@@ -311,36 +311,29 @@ public class StreetRouter {
         return result;
     }
 
-    public StreetRouter (StreetLayer streetLayer) {
-        this(streetLayer, 5000);
+    /**
+     * Create a StreetRouter with default state pool size.
+     * @param streetLayer The street layer to route on.
+     */
+    public StreetRouter(StreetLayer streetLayer) {
+        this(streetLayer, 20000);
     }
 
     /**
-     * Create a StreetRouter with a specific initial capacity for the state pool.
+     * Create a StreetRouter with a specific state pool size.
      * @param streetLayer The street layer to route on.
-     * @param initialCapacity The initial capacity of the state pool.
+     * @param poolSize The size of the state pool (pre-allocated).
      */
-    public StreetRouter(StreetLayer streetLayer, int initialCapacity) {
-        this(streetLayer, initialCapacity, 20000);
-    }
-
-    /**
-     * Create a StreetRouter with a specific initial capacity and max size for the state pool.
-     * @param streetLayer The street layer to route on.
-     * @param initialCapacity The initial capacity of the state pool.
-     * @param maxSize The maximum size of the state pool.
-     */
-    public StreetRouter(StreetLayer streetLayer, int initialCapacity, int maxSize) {
-        this(streetLayer, new EdgeStore.DefaultTravelTimeCalculator(), new TurnCostCalculator(streetLayer, true), new EdgeStore.DefaultTravelCostCalculator(), initialCapacity, maxSize);
+    public StreetRouter(StreetLayer streetLayer, int poolSize) {
+        this(streetLayer, new EdgeStore.DefaultTravelTimeCalculator(), new TurnCostCalculator(streetLayer, true), new EdgeStore.DefaultTravelCostCalculator(), poolSize);
     }
 
     public StreetRouter (StreetLayer streetLayer, TravelTimeCalculator travelTimeCalculator, TurnCostCalculator turnCostCalculator, TravelCostCalculator travelCostCalculator) {
-        this(streetLayer, travelTimeCalculator, turnCostCalculator, travelCostCalculator, 5000, 20000);
+        this(streetLayer, travelTimeCalculator, turnCostCalculator, travelCostCalculator, 20000);
     }
 
-    public StreetRouter (StreetLayer streetLayer, TravelTimeCalculator travelTimeCalculator, TurnCostCalculator turnCostCalculator, TravelCostCalculator travelCostCalculator, int initialCapacity, int maxSize) {
-        this.statePool = new StatePool(initialCapacity, maxSize);
-        statePool.reset(); // Clear any leaked states from previous use
+    public StreetRouter (StreetLayer streetLayer, TravelTimeCalculator travelTimeCalculator, TurnCostCalculator turnCostCalculator, TravelCostCalculator travelCostCalculator, int maxSize) {
+        this.statePool = new StatePool(maxSize);
         this.streetLayer = streetLayer;
         // TODO one of two things: 1) don't hardwire drive-on-right, or 2) https://en.wikipedia.org/wiki/Dagen_H
         this.turnCostCalculator = turnCostCalculator;
@@ -677,11 +670,13 @@ public class StreetRouter {
                 edgeList = streetLayer.outgoingEdges.get(s0.vertex);
             }
             // explore edges leaving this vertex
+            // Reuse edge cursor instead of seeking each time
+            final EdgeStore.Edge edgeCursor = edge; // for lambda capture
             edgeList.forEach(eidx -> {
-                edge.seek(eidx);
+                edgeCursor.seek(eidx);
                 State s1 = statePool.borrow();
                 // traverseInto returns a boolean indicating whether a valid state was produced.
-                if (edge.traverseInto(s1, s0, streetMode, profileRequest, turnCostCalculator, travelTimeCalculator, travelCostCalculator)) {
+                if (edgeCursor.traverseInto(s1, s0, streetMode, profileRequest, turnCostCalculator, travelTimeCalculator, travelCostCalculator)) {
                     if (s1.distance <= distanceLimitMm && s1.getDurationSeconds() < tmpTimeLimitSeconds) {
                         if (!isDominated(s1)) {
                             // Calculate the heuristic (which involves a square root) only when the state is retained.
@@ -717,16 +712,27 @@ public class StreetRouter {
             return false;
         }
 
+        // Fast path: avoid iterator allocation in common case
+        if (states.size() == 1) {
+            State existingState = states.iterator().next();
+            if (dominates(existingState, newState)) {
+                return true;
+            } else if (dominates(newState, existingState)) {
+                states.clear();
+            }
+            return false;
+        }
+
+        // Original code for multiple states
         Iterator<State> it = states.iterator();
         while (it.hasNext()) {
             State existingState = it.next();
             if (dominates(existingState, newState)) {
-                return true;  // Can return immediately
+                return true;
             } else if (dominates(newState, existingState)) {
-                it.remove();  // Remove directly via iterator - no garbage
+                it.remove();
             }
         }
-
         return false;
     }
 
@@ -789,21 +795,24 @@ public class StreetRouter {
      * Get a single best state at the end of an edge.
      * There can be more than one state at the end of an edge due to turn restrictions
      */
-    public State getStateAtEdge (int edgeIndex) {
+    public State getStateAtEdge(int edgeIndex) {
         Collection<State> states = bestStatesAtEdge.get(edgeIndex);
-        if (states.isEmpty()) {
-            return null; // Unreachable
+        if (states == null || states.isEmpty()) {
+            return null;
         }
+
+        State best = null;
+        int bestValue = Integer.MAX_VALUE;
+
         // Get the lowest weight, even if it's in the middle of a turn restriction.
-        Iterator<State> it = states.iterator();
-        State state = it.next();
-        while (it.hasNext()) {
-            State candidate = it.next();
-            if (candidate.getRoutingVariable(quantityToMinimize) < state.getRoutingVariable(quantityToMinimize)) {
-                state = candidate;
+        for (State state : states) {  // for-each is faster than iterator for ArrayList
+            int value = state.getRoutingVariable(quantityToMinimize);
+            if (value < bestValue) {
+                best = state;
+                bestValue = value;
             }
         }
-        return state;
+        return best;
     }
 
     /**
@@ -1290,7 +1299,7 @@ public class StreetRouter {
         TIntObjectMap<State> vertices = new TIntObjectHashMap<>();
 
         //Save vertices which are too close so that if they appear again (with longer path to them)
-        // they are also skipped 
+        // they are also skipped
         TIntSet skippedVertices = new TIntHashSet();
 
         public VertexFlagVisitor(StreetLayer streetLayer, State.RoutingVariable dominanceVariable,

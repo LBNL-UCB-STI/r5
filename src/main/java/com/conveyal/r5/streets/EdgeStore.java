@@ -716,7 +716,7 @@ public class EdgeStore implements Serializable {
                         //In reverse search order of from/to and viaEdges is changed since we search from toEdge to fromEdge
                         toEdge = restriction.fromEdge;
                         if (viaEdges.length > 1) {
-                            TurnRestriction.reverse(viaEdges);
+                            viaEdges = TurnRestriction.reverse(viaEdges);  // Now safe - creates copy
                         }
                     }
 
