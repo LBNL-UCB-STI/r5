@@ -12,7 +12,7 @@ public class StatePool {
     // Per-route tracking (reset before each route)
     private int exhaustionsSinceReset = 0;
 
-    StatePool(int poolSize) {
+    public StatePool(int poolSize) {
         this.pool = new StreetRouter.State[poolSize];
 
         // Pre-populate entire pool
