@@ -1,6 +1,6 @@
 package com.conveyal.r5.streets;
 
-class StatePool {
+public class StatePool {
     private final StreetRouter.State[] pool;
     private int nextAvailable;
 

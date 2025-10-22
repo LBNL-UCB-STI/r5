@@ -341,6 +341,29 @@ public class StreetRouter {
         this.travelCostCalculator = travelCostCalculator;
     }
 
+    /**
+     * Create a StreetRouter with an existing state pool (for reuse across multiple routers).
+     * @param streetLayer The street layer to route on.
+     * @param travelTimeCalculator Calculator for travel times.
+     * @param turnCostCalculator Calculator for turn costs.
+     * @param travelCostCalculator Calculator for travel costs.
+     * @param statePool Pre-existing StatePool to use (will be reset before routing).
+     */
+    public StreetRouter(
+            StreetLayer streetLayer,
+            TravelTimeCalculator travelTimeCalculator,
+            TurnCostCalculator turnCostCalculator,
+            TravelCostCalculator travelCostCalculator,
+            StatePool statePool
+    ) {
+        this.statePool = statePool;
+        this.statePool.reset();
+        this.streetLayer = streetLayer;
+        this.turnCostCalculator = turnCostCalculator;
+        this.travelTimeCalculator = travelTimeCalculator;
+        this.travelCostCalculator = travelCostCalculator;
+    }
+
     public int getStatePoolSize() {
         return statePool.getPoolSize();
     }
