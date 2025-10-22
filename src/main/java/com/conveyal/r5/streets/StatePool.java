@@ -4,6 +4,14 @@ class StatePool {
     private final StreetRouter.State[] pool;
     private int nextAvailable;
 
+    // Overall stats
+    private long borrowCount = 0;
+    private long exhaustionCount = 0;
+    private int maxInUse = 0;
+
+    // Per-route tracking (reset before each route)
+    private int exhaustionsSinceReset = 0;
+
     StatePool(int poolSize) {
         this.pool = new StreetRouter.State[poolSize];
 
@@ -15,10 +23,21 @@ class StatePool {
     }
 
     StreetRouter.State borrow() {
+        borrowCount++;
+
         if (nextAvailable > 0) {
+            // Track max usage
+            int inUse = pool.length - nextAvailable + 1;
+            if (inUse > maxInUse) {
+                maxInUse = inUse;
+            }
+
             return pool[--nextAvailable];
         }
+
         // Pool exhausted - allocate non-pooled state (will be GC'd)
+        exhaustionCount++;
+        exhaustionsSinceReset++;
         return new StreetRouter.State();
     }
 
@@ -33,11 +52,40 @@ class StatePool {
     void reset() {
         // Return all states to available
         nextAvailable = pool.length;
-        // States are already in pool, just make them available again
-        // (reset() will be called when borrowed)
+        // Reset per-route counter
+        exhaustionsSinceReset = 0;
     }
 
-    int getPoolSize() { return pool.length; }
-    int getAvailableCount() { return nextAvailable; }
-    int getInUseCount() { return pool.length - nextAvailable; }
+    // Getters for stats
+    int getPoolSize() {
+        return pool.length;
+    }
+
+    int getAvailableCount() {
+        return nextAvailable;
+    }
+
+    int getInUseCount() {
+        return pool.length - nextAvailable;
+    }
+
+    long getBorrowCount() {
+        return borrowCount;
+    }
+
+    long getExhaustionCount() {
+        return exhaustionCount;
+    }
+
+    int getMaxInUse() {
+        return maxInUse;
+    }
+
+    double getExhaustionRate() {
+        return borrowCount > 0 ? (exhaustionCount * 100.0) / borrowCount : 0.0;
+    }
+
+    int getExhaustionsSinceReset() {
+        return exhaustionsSinceReset;
+    }
 }
