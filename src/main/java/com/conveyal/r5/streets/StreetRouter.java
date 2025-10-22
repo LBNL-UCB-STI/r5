@@ -341,6 +341,34 @@ public class StreetRouter {
         this.travelCostCalculator = travelCostCalculator;
     }
 
+    public int getStatePoolSize() {
+        return statePool.getPoolSize();
+    }
+
+    public long getStatePoolBorrowCount() {
+        return statePool.getBorrowCount();
+    }
+
+    public long getStatePoolExhaustionCount() {
+        return statePool.getExhaustionCount();
+    }
+
+    public int getStatePoolExhaustionsSinceReset() {
+        return statePool.getExhaustionsSinceReset();
+    }
+
+    public int getStatePoolMaxInUse() {
+        return statePool.getMaxInUse();
+    }
+
+    public double getStatePoolExhaustionRate() {
+        return statePool.getExhaustionRate();
+    }
+
+    public int getInUseCount() {
+        return statePool.getInUseCount();
+    }
+
 
     /**
      * Set the origin point of this StreetRouter (before a search is started) to a point along an edge that allows
