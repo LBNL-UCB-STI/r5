@@ -94,20 +94,21 @@ public class TIntObjectSingleValueOptimizedMultimap<V> {
      *         For multiple values, returns the ArrayList.
      */
     public Collection<V> get(int key) {
-        // Check single-value map first (most common case)
         V single = singleValueMap.get(key);
         if (single != null) {
-            return Collections.singletonList(single);
+            // Allocate small ArrayList for single value
+            ArrayList<V> result = new ArrayList<>(1);
+            result.add(single);
+            return result;
         }
 
-        // Check multi-value map
         ArrayList<V> multi = multiValueMap.get(key);
         if (multi != null) {
             return multi;
         }
 
-        // Key not found
-        return Collections.emptyList();
+        // Return empty but mutable list
+        return new ArrayList<>();
     }
 
     /**
