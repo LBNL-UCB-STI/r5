@@ -9,6 +9,7 @@ import com.conveyal.r5.transit.TransitLayer;
 import com.conveyal.r5.transit.TransportNetwork;
 import com.conveyal.r5.util.TIntObjectHashMultimap;
 import com.conveyal.r5.util.TIntObjectMultimap;
+import com.conveyal.r5.util.TIntObjectSingleValueOptimizedMultimap;
 import gnu.trove.iterator.TIntIterator;
 import gnu.trove.list.TIntList;
 import gnu.trove.map.TIntIntMap;
@@ -151,12 +152,11 @@ public class StreetRouter {
      * by taking advantage of the fact that we almost always have a single state per edge
      * (the only time we don't is when we're in the middle of a turn restriction).
      */
-    TIntObjectMultimap<State> bestStatesAtEdge = new TIntObjectHashMultimap<>();
+    private final int estimatedEdges;
 
-    // The queue is prioritized by the specified optimization objective variable.
-    PriorityQueue<State> queue = new PriorityQueue<>(
-            Comparator.comparingInt((State s0) -> s0.getRoutingVariable(quantityToMinimize) + s0.heuristic)
-    );
+    private final TIntObjectSingleValueOptimizedMultimap<State> bestStatesAtEdge;
+
+    private final PriorityQueue<State> queue;
 
 
     /**
@@ -339,6 +339,12 @@ public class StreetRouter {
         this.turnCostCalculator = turnCostCalculator;
         this.travelTimeCalculator = travelTimeCalculator;
         this.travelCostCalculator = travelCostCalculator;
+        this.estimatedEdges = streetLayer.edgeStore.nEdges();
+        this.bestStatesAtEdge = new TIntObjectSingleValueOptimizedMultimap<>(estimatedEdges);
+
+        this.queue = new PriorityQueue<>(
+                Comparator.comparingInt((State s0) -> s0.getRoutingVariable(quantityToMinimize) + s0.heuristic)
+        );
     }
 
     /**
@@ -362,6 +368,12 @@ public class StreetRouter {
         this.turnCostCalculator = turnCostCalculator;
         this.travelTimeCalculator = travelTimeCalculator;
         this.travelCostCalculator = travelCostCalculator;
+        this.estimatedEdges = streetLayer.edgeStore.nEdges();
+        this.bestStatesAtEdge = new TIntObjectSingleValueOptimizedMultimap<>(estimatedEdges);
+
+        this.queue = new PriorityQueue<>(
+                Comparator.comparingInt((State s0) -> s0.getRoutingVariable(quantityToMinimize) + s0.heuristic)
+        );
     }
 
     public int getStatePoolSize() {
