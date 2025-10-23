@@ -770,23 +770,26 @@ public class StreetRouter {
      * same edge. Side effect: Boot out any existing states that are dominated by the new one.
      */
     private boolean isDominated(State newState) {
+        // Fast path for single-value (95% of cases) - ZERO allocations!
+        if (bestStatesAtEdge.isSingleValue(newState.backEdge)) {
+            State existingState = bestStatesAtEdge.getSingle(newState.backEdge);
+
+            if (dominates(existingState, newState)) {
+                return true;
+            } else if (dominates(newState, existingState)) {
+                // Clear the old state - no Collection needed!
+                bestStatesAtEdge.clear(newState.backEdge);
+            }
+            return false;
+        }
+
+        // Slow path for multi-value (5% of cases)
         Collection<State> states = bestStatesAtEdge.get(newState.backEdge);
         if (states == null || states.isEmpty()) {
             return false;
         }
 
-        // Fast path: avoid iterator allocation in common case
-        if (states.size() == 1) {
-            State existingState = states.iterator().next();
-            if (dominates(existingState, newState)) {
-                return true;
-            } else if (dominates(newState, existingState)) {
-                states.clear();
-            }
-            return false;
-        }
-
-        // Original code for multiple states
+        // This returns mutable ArrayList, so iterator works
         Iterator<State> it = states.iterator();
         while (it.hasNext()) {
             State existingState = it.next();
@@ -859,6 +862,12 @@ public class StreetRouter {
      * There can be more than one state at the end of an edge due to turn restrictions
      */
     public State getStateAtEdge(int edgeIndex) {
+        // Fast path: single value (95% of cases) - just return it!
+        if (bestStatesAtEdge.isSingleValue(edgeIndex)) {
+            return bestStatesAtEdge.getSingle(edgeIndex);  // No iteration, no allocation!
+        }
+
+        // Slow path: multiple values (5% of cases) - find best
         Collection<State> states = bestStatesAtEdge.get(edgeIndex);
         if (states == null || states.isEmpty()) {
             return null;

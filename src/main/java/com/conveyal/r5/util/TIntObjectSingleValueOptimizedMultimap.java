@@ -58,15 +58,16 @@ public class TIntObjectSingleValueOptimizedMultimap<V> {
      * If already using ArrayList, appends to it.
      */
     public void put(int key, V value) {
-        // Fast path: check if key already has single value
+        // Check if key already has a single value
         V existingSingle = singleValueMap.get(key);
 
         if (existingSingle != null) {
-            // Migrate from single to multiple values
+            // Second value for this key - migrate from single to multiple
             singleValueMap.remove(key);
 
-            ArrayList<V> list = new ArrayList<>(4); // Pre-sized for typical turn restriction depth
-            list.add(existingSingle);
+            // Create ArrayList with capacity 4 (good for most multi-value cases)
+            ArrayList<V> list = new ArrayList<>(4);
+            list.add(existingSingle);  // ← Add the V directly (not wrapped in ArrayList!)
             list.add(value);
             multiValueMap.put(key, list);
 
@@ -77,38 +78,69 @@ public class TIntObjectSingleValueOptimizedMultimap<V> {
         ArrayList<V> existingMulti = multiValueMap.get(key);
 
         if (existingMulti != null) {
-            // Append to existing list
+            // Third+ value - just add to existing ArrayList
             existingMulti.add(value);
             return;
         }
 
-        // First value for this key - store directly
+        // First value for this key - store V directly (NO ArrayList creation!)
         singleValueMap.put(key, value);
     }
 
     /**
-     * Get all values for a key.
-     *
-     * @return Collection of values, or empty collection if key not found.
-     *         For single values, returns singleton list (no allocation).
-     *         For multiple values, returns the ArrayList.
+     * Get values for reading only (returns immutable wrapper for single values).
+     * DO NOT modify the returned collection!
      */
     public Collection<V> get(int key) {
+        // Check single-value map first
         V single = singleValueMap.get(key);
         if (single != null) {
-            // Allocate small ArrayList for single value
-            ArrayList<V> result = new ArrayList<>(1);
-            result.add(single);
-            return result;
+            return Collections.singletonList(single);  // ← Immutable, NO allocation!
         }
+
+        // Check multi-value map
+        ArrayList<V> multi = multiValueMap.get(key);
+        if (multi != null) {
+            return multi;  // ← Mutable ArrayList for iteration
+        }
+
+        return Collections.emptyList();
+    }
+
+    /**
+     * Get the single value for a key (fast path for single-value case).
+     * Returns null if key has multiple values or doesn't exist.
+     */
+    public V getSingle(int key) {
+        return singleValueMap.get(key);
+    }
+
+    /**
+     * Check if key has exactly one value.
+     */
+    public boolean isSingleValue(int key) {
+        return singleValueMap.containsKey(key);
+    }
+
+    /**
+     * Remove all values for a key.
+     */
+    public void clear(int key) {
+        singleValueMap.remove(key);
+        multiValueMap.remove(key);
+    }
+
+    /**
+     * Replace all values for a key with empty (but keep key registered).
+     * Used when a new state dominates all existing states.
+     */
+    public void clearValues(int key) {
+        singleValueMap.remove(key);
 
         ArrayList<V> multi = multiValueMap.get(key);
         if (multi != null) {
-            return multi;
+            multi.clear();
         }
-
-        // Return empty but mutable list
-        return new ArrayList<>();
     }
 
     /**
