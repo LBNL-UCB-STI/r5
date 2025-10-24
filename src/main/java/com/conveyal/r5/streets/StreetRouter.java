@@ -1339,19 +1339,18 @@ public class StreetRouter {
             return sb.toString();
         }
 
-        public int getRoutingVariable (RoutingVariable variable) {
-            if (variable == null) throw new NullPointerException("Routing variable is null");
+        public final int getRoutingVariable(RoutingVariable variable) {
+            // WEIGHT is most common - used for pathfinding
+            if (variable == RoutingVariable.WEIGHT) return this.weight;
 
-            switch (variable) {
-                case DURATION_SECONDS:
-                    return this.durationSeconds;
-                case WEIGHT:
-                    return this.weight;
-                case DISTANCE_MILLIMETERS:
-                    return this.distance;
-                default:
-                    throw new IllegalStateException("Unknown routing variable");
-            }
+            // DURATION_SECONDS is second most common - used for time-based queries
+            if (variable == RoutingVariable.DURATION_SECONDS) return this.durationSeconds;
+
+            // DISTANCE_MILLIMETERS is least common
+            if (variable == RoutingVariable.DISTANCE_MILLIMETERS) return this.distance;
+
+            // This should never happen in production - null checks are expensive
+            throw new IllegalStateException("Invalid routing variable: " + variable);
         }
 
         public static enum RoutingVariable {
