@@ -81,6 +81,8 @@ public class StreetRouter {
      */
     public int flagSearchQuantity = 20;
 
+    private final Comparator<State> stateComparator;
+
     /**
      * The reason this is pluggable is to account for left and right hand drive (as well as any other country-specific
      * details you might want to implement)
@@ -342,6 +344,9 @@ public class StreetRouter {
         return result;
     }
 
+
+
+
     /**
      * Create a StreetRouter with default state pool size.
      * @param streetLayer The street layer to route on.
@@ -373,9 +378,31 @@ public class StreetRouter {
         this.estimatedEdges = streetLayer.edgeStore.nEdges();
         this.bestStatesAtEdge = new TIntObjectSingleValueOptimizedMultimap<>(estimatedEdges);
 
-        this.queue = new PriorityQueue<>(
-                Comparator.comparingInt((State s0) -> s0.getRoutingVariable(quantityToMinimize) + s0.heuristic)
-        );
+        if (quantityToMinimize == State.RoutingVariable.DURATION_SECONDS) {
+            this.stateComparator = new Comparator<State>() {
+                @Override
+                public int compare(State s1, State s2) {
+                    // Direct field access for DURATION_SECONDS
+                    return Integer.compare(
+                            s1.durationSeconds + s1.heuristic,
+                            s2.durationSeconds + s2.heuristic
+                    );
+                }
+            };
+        } else { // WEIGHT is the only other option used in practice
+            this.stateComparator = new Comparator<State>() {
+                @Override
+                public int compare(State s1, State s2) {
+                    // Direct field access for WEIGHT
+                    return Integer.compare(
+                            s1.weight + s1.heuristic,
+                            s2.weight + s2.heuristic
+                    );
+                }
+            };
+        }
+
+        this.queue = new PriorityQueue<>(1000, stateComparator);
     }
 
     /**
@@ -402,9 +429,31 @@ public class StreetRouter {
         this.estimatedEdges = streetLayer.edgeStore.nEdges();
         this.bestStatesAtEdge = new TIntObjectSingleValueOptimizedMultimap<>(estimatedEdges);
 
-        this.queue = new PriorityQueue<>(
-                Comparator.comparingInt((State s0) -> s0.getRoutingVariable(quantityToMinimize) + s0.heuristic)
-        );
+        if (quantityToMinimize == State.RoutingVariable.DURATION_SECONDS) {
+            this.stateComparator = new Comparator<State>() {
+                @Override
+                public int compare(State s1, State s2) {
+                    // Direct field access for DURATION_SECONDS
+                    return Integer.compare(
+                            s1.durationSeconds + s1.heuristic,
+                            s2.durationSeconds + s2.heuristic
+                    );
+                }
+            };
+        } else { // WEIGHT is the only other option used in practice
+            this.stateComparator = new Comparator<State>() {
+                @Override
+                public int compare(State s1, State s2) {
+                    // Direct field access for WEIGHT
+                    return Integer.compare(
+                            s1.weight + s1.heuristic,
+                            s2.weight + s2.heuristic
+                    );
+                }
+            };
+        }
+
+        this.queue = new PriorityQueue<>(1000, stateComparator);
     }
 
     public int getStatePoolSize() {
