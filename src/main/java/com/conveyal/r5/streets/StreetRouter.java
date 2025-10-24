@@ -725,8 +725,16 @@ public class StreetRouter {
             // by traversing the same edge. Check that the state coming off the queue has not been dominated before
             // exploring it. States at the origin may have their backEdge set to a negative number to indicate that
             // they have no backEdge (were not produced by traversing an edge). Skip the check for those states.
-            if (s0.backEdge >= 0 && !bestStatesAtEdge.get(s0.backEdge).contains(s0)) continue;
-
+            if (s0.backEdge >= 0) {
+                boolean stateExists;
+                if (bestStatesAtEdge.isSingleValue(s0.backEdge)) {
+                    stateExists = (bestStatesAtEdge.getSingle(s0.backEdge) == s0);
+                } else {
+                    Collection<State> states = bestStatesAtEdge.get(s0.backEdge);
+                    stateExists = (states != null && states.contains(s0));
+                }
+                if (!stateExists) continue;
+            }
             // If the search has reached the destination, the state coming off the queue is the best way to get there.
             if (toVertex > 0 && toVertex == s0.vertex) break;
 
