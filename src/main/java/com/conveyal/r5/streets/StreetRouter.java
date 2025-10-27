@@ -418,7 +418,8 @@ public class StreetRouter {
             TravelTimeCalculator travelTimeCalculator,
             TurnCostCalculator turnCostCalculator,
             TravelCostCalculator travelCostCalculator,
-            StatePool statePool
+            StatePool statePool,
+            State.RoutingVariable quantityToMinimize
     ) {
         this.statePool = statePool;
         this.statePool.reset();
@@ -428,6 +429,7 @@ public class StreetRouter {
         this.travelCostCalculator = travelCostCalculator;
         this.estimatedEdges = streetLayer.edgeStore.nEdges();
         this.bestStatesAtEdge = new TIntObjectSingleValueOptimizedMultimap<>(estimatedEdges);
+        this.quantityToMinimize = quantityToMinimize;
 
         if (quantityToMinimize == State.RoutingVariable.DURATION_SECONDS) {
             this.stateComparator = new Comparator<State>() {

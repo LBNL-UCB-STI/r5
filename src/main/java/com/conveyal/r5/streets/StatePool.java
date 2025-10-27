@@ -57,35 +57,35 @@ public class StatePool {
     }
 
     // Getters for stats
-    int getPoolSize() {
+    public int getPoolSize() {
         return pool.length;
     }
 
-    int getAvailableCount() {
+    public int getAvailableCount() {
         return nextAvailable;
     }
 
-    int getInUseCount() {
+    public int getInUseCount() {
         return pool.length - nextAvailable;
     }
 
-    long getBorrowCount() {
+    public long getBorrowCount() {
         return borrowCount;
     }
 
-    long getExhaustionCount() {
+    public long getExhaustionCount() {
         return exhaustionCount;
     }
 
-    int getMaxInUse() {
+    public int getMaxInUse() {
         return maxInUse;
     }
 
-    double getExhaustionRate() {
+    public double getExhaustionRate() {
         return borrowCount > 0 ? (exhaustionCount * 100.0) / borrowCount : 0.0;
     }
 
-    int getExhaustionsSinceReset() {
+    public int getExhaustionsSinceReset() {
         return exhaustionsSinceReset;
     }
 }
