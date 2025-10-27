@@ -143,7 +143,32 @@ public class PathWithTimes extends Path {
         }
 
         sortAndFilterItineraries();
-        computeStatistics(req, accessTime, egressTime);
+        sortAndFilterItineraries();
+
+        if (req.monteCarloDraws > 1) {
+            computeStatistics(req, accessTime, egressTime);
+        } else {
+            // Single-sample routing: create degenerate stats from the one itinerary
+            this.stats = new Stats();
+            this.waitStats = new Stats[length];
+            this.rideStats = new Stats[length];
+
+            if (!itineraries.isEmpty()) {
+                Itinerary itin = itineraries.get(0);
+                // Total travel time = access + transit + egress
+                int totalTime = itin.alightTimes[length - 1] - itin.boardTimes[0] + accessTime + egressTime;
+                this.stats.min = totalTime;
+                this.stats.avg = totalTime;
+                this.stats.max = totalTime;
+                this.stats.num = 1;
+
+                // Create empty stats for waits and rides
+                for (int i = 0; i < length; i++) {
+                    this.waitStats[i] = new Stats();
+                    this.rideStats[i] = new Stats();
+                }
+            }
+        }
     }
 
     /**

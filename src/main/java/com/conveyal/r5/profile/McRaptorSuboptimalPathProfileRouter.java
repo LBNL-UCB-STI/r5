@@ -4,6 +4,7 @@ import com.conveyal.r5.analyst.fare.FareBounds;
 import com.conveyal.r5.analyst.fare.InRoutingFareCalculator;
 import com.conveyal.r5.api.util.LegMode;
 import com.conveyal.r5.api.util.TransitModes;
+import com.conveyal.r5.streets.McRaptorStatePool;
 import com.conveyal.r5.streets.StreetRouter;
 import com.conveyal.r5.transit.RouteInfo;
 import com.conveyal.r5.transit.TransitLayer;
@@ -35,6 +36,8 @@ import java.util.function.Supplier;
 public class McRaptorSuboptimalPathProfileRouter {
     
     private static final Logger LOG = LoggerFactory.getLogger(McRaptorSuboptimalPathProfileRouter.class);
+
+    private final McRaptorStatePool statePool;
 
     public static final int BOARD_SLACK = 60;
 
@@ -69,9 +72,21 @@ public class McRaptorSuboptimalPathProfileRouter {
     /** In order to properly do target pruning we store the best times at each target _by access mode_, so car trips don't quash walk trips */
     private TObjectIntMap<LegMode> bestTimesAtTargetByAccessMode = new TObjectIntHashMap<>(4, 0.95f, Integer.MAX_VALUE);
 
+    public McRaptorSuboptimalPathProfileRouter(
+            TransportNetwork network,
+            ProfileRequest req,
+            Map<LegMode, TIntIntMap> accessTimes,
+            Map<LegMode, TIntIntMap> egressTimes,
+            IntFunction<DominatingList> listSupplier,
+            InRoutingFareCalculator.Collater collapseParetoSurfaceToTime
+    ) {
+        this(network, req, accessTimes, egressTimes, listSupplier, collapseParetoSurfaceToTime,
+                new McRaptorStatePool(50000));
+    }
+
     public McRaptorSuboptimalPathProfileRouter (TransportNetwork network, ProfileRequest req, Map<LegMode,
             TIntIntMap> accessTimes, Map<LegMode, TIntIntMap> egressTimes, IntFunction<DominatingList> listSupplier,
-                                                InRoutingFareCalculator.Collater collapseParetoSurfaceToTime) {
+                                                InRoutingFareCalculator.Collater collapseParetoSurfaceToTime, McRaptorStatePool statePool) {
         this.network = network;
         this.request = req;
         this.accessTimes = accessTimes;
@@ -87,6 +102,59 @@ public class McRaptorSuboptimalPathProfileRouter {
         // e.g. (int) (request.fromLat * 1e9).  Leaving out an argument will make it use a combination of time and
         // the instance's identity hash code, which makes it truly random for all practical purposes.
         this.mersenneTwister = new MersenneTwister((int) (request.fromLat * 1e9));
+        this.statePool = statePool;
+    }
+
+    /**
+     * Reset this router for reuse with new parameters.
+     * This allows router pooling to avoid repeated object allocation.
+     */
+    public void reset(
+            ProfileRequest req,
+            Map<LegMode, TIntIntMap> accessTimes,
+            Map<LegMode, TIntIntMap> egressTimes,
+            IntFunction<DominatingList> listSupplier,
+            InRoutingFareCalculator.Collater collapseParetoSurfaceToTime
+    ) {
+        this.request = req;
+        this.accessTimes = accessTimes;
+        this.egressTimes = egressTimes;
+        this.listSupplier = listSupplier;
+        this.collapseParetoSurfaceToTime = collapseParetoSurfaceToTime;
+
+        // Clear search state
+        this.bestStates.clear();
+        this.timesAtStopsEachIteration.clear();
+        this.touchedStops.clear();
+        this.touchedPatterns.clear();
+        this.patternsNearDestination.clear();
+        this.bestTimesAtTargetByAccessMode.clear();
+        this.round = 0;
+        this.departureTime = 0;
+
+        // Reset state pool
+        this.statePool.reset();
+
+        // Update services active for new date
+        this.servicesActive = network.transitLayer.getActiveServicesForDate(req.date);
+
+        // Re-seed random number generator
+        this.mersenneTwister = new MersenneTwister((int) (request.fromLat * 1e9));
+
+        // Reset offsets
+        this.offsets = new FrequencyRandomOffsets(network.transitLayer);
+    }
+
+    public McRaptorStatePool getStatePool() {
+        return statePool;
+    }
+
+    public int getStatePoolMaxInUse() {
+        return statePool.getMaxInUse();
+    }
+
+    public int getStatePoolExhaustionsSinceReset() {
+        return statePool.getExhaustionsSinceReset();
     }
 
     /** Get a McRAPTOR state bag for every departure minute */
@@ -144,6 +212,7 @@ public class McRaptorSuboptimalPathProfileRouter {
             bestStates.clear();
             touchedPatterns.clear();
             touchedStops.clear();
+            statePool.reset();
             // Round 0 is in essence non-transit access.
             round = 0;
             // final to allow use in the lambda function below
@@ -151,12 +220,16 @@ public class McRaptorSuboptimalPathProfileRouter {
 
             // enqueue/relax access times, which are seconds of travel time (not clock time) by mode from the origin
             // to nearby stops
-            accessTimes.forEach((mode, times) -> times.forEachEntry((stop, accessTime) -> {
-                if (addState(stop, -1, -1, finalDepartureTime + accessTime, -1, -1, -1, null, mode))
-                    touchedStops.set(stop);
+            for (Map.Entry<LegMode, TIntIntMap> entry : accessTimes.entrySet()) {
+                LegMode mode = entry.getKey();
+                TIntIntMap times = entry.getValue();
 
-                return true;
-            }));
+                times.forEachEntry((stop, accessTime) -> {
+                    if (addState(stop, -1, -1, finalDepartureTime + accessTime, -1, -1, -1, null, mode))
+                        touchedStops.set(stop);
+                    return true;
+                });
+            }
 
             markPatterns();
 
@@ -473,25 +546,33 @@ public class McRaptorSuboptimalPathProfileRouter {
     private Collection<McRaptorState> doPropagationToDestination(int departureTime) {
         McRaptorStateBag bag = createStateBag(departureTime);
 
-        egressTimes.forEach((mode, times) -> times.forEachEntry((stop, egressTime) -> {
-            McRaptorStateBag bagAtStop = bestStates.get(stop);
-            if (bagAtStop == null) return true;
+        for (Map.Entry<LegMode, TIntIntMap> egressEntry : egressTimes.entrySet()) {
+            LegMode mode = egressEntry.getKey();
+            TIntIntMap times = egressEntry.getValue();
 
-            for (McRaptorState state : bagAtStop.getNonTransferStates()) {
-                McRaptorState stateAtDest = new McRaptorState();
-                stateAtDest.back = state;
-                // walk to destination is transfer
-                stateAtDest.pattern = -1;
-                stateAtDest.trip = -1;
-                stateAtDest.stop = -1;
-                stateAtDest.accessMode = state.accessMode;
-                stateAtDest.egressMode = mode;
-                stateAtDest.time = state.time + egressTime;
-                bag.add(stateAtDest);
-            }
+            times.forEachEntry((stop, egressTime) -> {
+                McRaptorStateBag bagAtStop = bestStates.get(stop);
+                if (bagAtStop == null) return true;
 
-           return true;
-        }));
+                for (McRaptorState state : bagAtStop.getNonTransferStates()) {
+                    McRaptorState stateAtDest = statePool.borrow();
+                    stateAtDest.back = state;
+                    stateAtDest.pattern = -1;
+                    stateAtDest.trip = -1;
+                    stateAtDest.stop = -1;
+                    stateAtDest.accessMode = state.accessMode;
+                    stateAtDest.egressMode = mode;
+                    stateAtDest.time = state.time + egressTime;
+
+                    boolean added = bag.add(stateAtDest);
+                    if (!added) {
+                        statePool.returnState(stateAtDest);
+                    }
+                }
+
+                return true;
+            });
+        }
 
         return bag.getBestStates();
     }
@@ -581,7 +662,14 @@ public class McRaptorSuboptimalPathProfileRouter {
         if (back != null && back.time > time)
             throw new IllegalStateException("Attempt to decrement time in state!");
 
-        McRaptorState state = new McRaptorState();
+        McRaptorState state = statePool.borrow();
+
+        if (back != null) {
+            state.setFrom(back, stop, boardStopPosition, alightStopPosition, time, boardTime, pattern, trip, round);
+        } else {
+            state.setOrigin(stop, time, round, accessMode);
+        }
+
         state.stop = stop;
         state.boardStopPosition = boardStopPosition;
         state.alightStopPosition = alightStopPosition;
@@ -614,15 +702,15 @@ public class McRaptorSuboptimalPathProfileRouter {
 
         // target pruning: keep track of best time at destination
         if (egressTimes != null && optimal && pattern != -1) {
-            // Save the worst egress time by any egress mode and use this for target pruning
-            // we don't know what egress mode will be used when we do target pruning, above, so we just store the
-            // best time for each access mode and the slowest egress mode
             int[] egressTimeWithSlowestEgressMode = new int[] { -1 };
-            egressTimes.forEach((mode, times) -> {
-                if (!times.containsKey(stop)) return;
+
+            // Manual iteration to avoid lambda allocation
+            for (Map.Entry<LegMode, TIntIntMap> entry : egressTimes.entrySet()) {
+                TIntIntMap times = entry.getValue();
+                if (!times.containsKey(stop)) continue;
                 int timeAtDest = time + times.get(stop);
                 egressTimeWithSlowestEgressMode[0] = Math.max(egressTimeWithSlowestEgressMode[0], timeAtDest);
-            });
+            }
 
             if (egressTimeWithSlowestEgressMode[0] != -1 &&
                     egressTimeWithSlowestEgressMode[0] < bestTimesAtTargetByAccessMode.get(accessMode)) {
@@ -710,6 +798,55 @@ public class McRaptorSuboptimalPathProfileRouter {
             sb.append("END PATH DUMP");
 
             return sb.toString();
+        }
+
+        /** Reset this state for reuse in the pool */
+        public void reset() {
+            this.back = null;
+            this.time = 0;
+            this.boardTime = 0;
+            this.pattern = -1;
+            this.trip = -1;
+            this.round = 0;
+            this.stop = -1;
+            this.boardStopPosition = -1;
+            this.alightStopPosition = -1;
+            this.accessMode = null;
+            this.egressMode = null;
+            this.fare = null;
+        }
+
+        /** Initialize from another state (for extending paths) */
+        void setFrom(McRaptorState source, int stop, int boardStopPosition, int alightStopPosition,
+                     int time, int boardTime, int pattern, int trip, int round) {
+            this.back = source;
+            this.stop = stop;
+            this.boardStopPosition = boardStopPosition;
+            this.alightStopPosition = alightStopPosition;
+            this.time = time;
+            this.boardTime = boardTime;
+            this.pattern = pattern;
+            this.trip = trip;
+            this.round = round;
+            this.accessMode = source != null ? source.accessMode : null;
+            this.egressMode = source != null ? source.egressMode : null;
+            // fare will be set separately if needed
+        }
+
+        /** Initialize from scratch (for origin states) */
+        void setOrigin(int stop, int time, int round, LegMode accessMode) {
+            this.back = null;
+            this.stop = stop;
+            this.boardStopPosition = -1;
+            this.alightStopPosition = -1;
+            this.time = time;
+            this.boardTime = -1;
+            this.pattern = -1;
+            this.trip = -1;
+            this.round = round;
+            this.accessMode = accessMode;
+            this.egressMode = null;
+            this.fare = null;
         }
     }
 
