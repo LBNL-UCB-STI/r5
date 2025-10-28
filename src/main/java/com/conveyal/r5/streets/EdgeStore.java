@@ -593,7 +593,14 @@ public class EdgeStore implements Serializable {
 
             s1.setFrom(s0, vertex, edgeIndex);
 
-            float time = travelTimeCalculator.getTravelTimeSeconds(this, s0.durationSeconds, streetMode, req);
+            // The ProfileRequest.fromTime contains when the search started
+            float time = travelTimeCalculator.getTravelTimeSeconds(
+                    this,
+                    s0.durationSeconds,
+                    streetMode,
+                    req,
+                    req.fromTime
+            );
             float weight = 0;
 
             if (!canTurnFrom(s0, s1, req.reverseSearch)) return false;

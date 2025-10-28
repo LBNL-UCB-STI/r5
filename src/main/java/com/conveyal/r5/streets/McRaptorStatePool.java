@@ -10,6 +10,7 @@ public class McRaptorStatePool {
     private long borrowCount = 0;
     private long exhaustionCount = 0;
     private int maxInUse = 0;
+    private int currentlyInUse = 0;
 
     // Per-route tracking (reset before each route)
     private int exhaustionsSinceReset = 0;
@@ -26,24 +27,24 @@ public class McRaptorStatePool {
 
     public McRaptorSuboptimalPathProfileRouter.McRaptorState borrow() {
         borrowCount++;
+        currentlyInUse++;
+
+        if (currentlyInUse > maxInUse) {
+            maxInUse = currentlyInUse;
+        }
 
         if (nextAvailable > 0) {
-            // Track max usage
-            int inUse = pool.length - nextAvailable + 1;
-            if (inUse > maxInUse) {
-                maxInUse = inUse;
-            }
-
             return pool[--nextAvailable];
         }
 
-        // Pool exhausted - allocate non-pooled state (will be GC'd)
+        // Pool exhausted - allocate non-pooled state
         exhaustionCount++;
         exhaustionsSinceReset++;
         return new McRaptorSuboptimalPathProfileRouter.McRaptorState();
     }
 
     public void returnState(McRaptorSuboptimalPathProfileRouter.McRaptorState s) {
+        currentlyInUse--;
         if (nextAvailable < pool.length) {
             s.reset();
             pool[nextAvailable++] = s;
@@ -56,6 +57,7 @@ public class McRaptorStatePool {
         nextAvailable = pool.length;
         // Reset per-route counter
         exhaustionsSinceReset = 0;
+        currentlyInUse = 0;
     }
 
     // Getters for stats

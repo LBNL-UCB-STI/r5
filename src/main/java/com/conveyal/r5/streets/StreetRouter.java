@@ -45,6 +45,8 @@ import static com.conveyal.r5.streets.LinkedPointSet.OFF_STREET_SPEED_MILLIMETER
  */
 public class StreetRouter {
 
+    public int searchStartTimeSeconds;
+
     private static final Logger LOG = LoggerFactory.getLogger(StreetRouter.class);
 
     private static final boolean DEBUG_OUTPUT = false;
@@ -673,6 +675,8 @@ public class StreetRouter {
     public void route () {
 
         long startTime = System.currentTimeMillis();
+
+        this.searchStartTimeSeconds = profileRequest.fromTime;
 
         final int distanceLimitMm;
         //This is needed otherwise timeLimitSeconds gets changed and
