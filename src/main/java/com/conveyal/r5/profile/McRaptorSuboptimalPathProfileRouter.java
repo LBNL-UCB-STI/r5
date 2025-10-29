@@ -126,6 +126,20 @@ public class McRaptorSuboptimalPathProfileRouter {
         this.bestNonTransferStatesBeforeRound = new TIntObjectHashMap<>(estimatedStops, 0.75f);
         this.statePool = statePool;
 
+        if (egressTimes != null) {
+            int size = egressTimes.size();
+            this.egressModesArray = new LegMode[size];
+            this.egressTimesArray = new TIntIntMap[size];
+            int i = 0;
+            for (Map.Entry<LegMode, TIntIntMap> entry : egressTimes.entrySet()) {
+                this.egressModesArray[i] = entry.getKey();
+                this.egressTimesArray[i] = entry.getValue();
+                i++;
+            }
+        } else {
+            this.egressModesArray = null;
+            this.egressTimesArray = null;
+        }
     }
 
     /**
@@ -166,21 +180,6 @@ public class McRaptorSuboptimalPathProfileRouter {
         this.offsets = new FrequencyRandomOffsets(network.transitLayer);
 
         nextTravelTimeArray = 0;
-
-        if (egressTimes != null) {
-            int size = egressTimes.size();
-            this.egressModesArray = new LegMode[size];
-            this.egressTimesArray = new TIntIntMap[size];
-            int i = 0;
-            for (Map.Entry<LegMode, TIntIntMap> entry : egressTimes.entrySet()) {
-                this.egressModesArray[i] = entry.getKey();
-                this.egressTimesArray[i] = entry.getValue();
-                i++;
-            }
-        } else {
-            this.egressModesArray = null;
-            this.egressTimesArray = null;
-        }
     }
 
     public McRaptorStatePool getStatePool() {
@@ -238,8 +237,12 @@ public class McRaptorSuboptimalPathProfileRouter {
 
         ArrayList<Integer> departureTimes = new ArrayList<>();
 
-        while(departureTimes.size() != request.monteCarloDraws){
-            departureTimes = generateDepartureTimesToSample(request);
+        // Only enforce exact count for Monte Carlo mode
+        // In deterministic mode (monteCarloDraws == 0), use whatever was generated
+        if (request.monteCarloDraws > 0) {
+            while(departureTimes.size() != request.monteCarloDraws){
+                departureTimes = generateDepartureTimesToSample(request);
+            }
         }
 
         for (int n = 0; n < departureTimes.size(); n++) {
@@ -289,7 +292,7 @@ public class McRaptorSuboptimalPathProfileRouter {
                 collateTravelTimes(departureTime);
             }
             if (LOG.isDebugEnabled()) {
-                LOG.debug("minute {} / {}", n + 1, request.monteCarloDraws);
+                LOG.debug("minute {} / {}", n + 1, departureTimes.size());
             }
         }
 
@@ -610,13 +613,30 @@ public class McRaptorSuboptimalPathProfileRouter {
         return bag.getBestStates();
     }
 
-    private ArrayList<Integer> generateDepartureTimesToSample (ProfileRequest request) {
+    private ArrayList<Integer> generateDepartureTimesToSample(ProfileRequest request) {
         // See Owen and Jiang 2016 (unfortunately no longer available online), add between f / 2 and
         // f + f / 2, where f is the mean step.
+        ArrayList<Integer> departureTimes = new ArrayList<>();
+
+        // When monteCarloDraws is 0, use deterministic sampling that matches
+        // how BEAM expands frequency routes into scheduled vehicle trips
+        if (request.monteCarloDraws == 0) {
+            // Deterministic mode: sample at regular intervals
+            // Use a reasonable default sampling rate (e.g., every 60 seconds)
+            int samplingInterval = 60; // seconds
+
+            for (int departureTime = request.fromTime;
+                 departureTime < request.toTime;
+                 departureTime += samplingInterval) {
+                departureTimes.add(departureTime);
+            }
+
+            return departureTimes;
+        }
+
+        // Original Monte Carlo behavior for non-zero draws
         int randomWalkStepMean = (request.toTime - request.fromTime) / request.monteCarloDraws;
         int randomWalkStepWidthOneSided = randomWalkStepMean / 2;
-
-        ArrayList<Integer> departureTimes = new ArrayList<>();
 
         for (int departureTime = request.fromTime + mersenneTwister.nextInt(randomWalkStepMean);
              departureTime < request.toTime;
@@ -625,7 +645,6 @@ public class McRaptorSuboptimalPathProfileRouter {
         }
 
         return departureTimes;
-
     }
 
     private void collateTravelTimes(int departureTime) {

@@ -4,6 +4,7 @@ package com.conveyal.r5.profile;
 import com.conveyal.r5.analyst.scenario.FakeGraph;
 import com.conveyal.r5.api.util.LegMode;
 import com.conveyal.r5.api.util.TransitModes;
+import com.conveyal.r5.streets.McRaptorStatePool;
 import com.conveyal.r5.streets.StreetRouter;
 import com.conveyal.r5.transit.TransportNetwork;
 import gnu.trove.map.TIntIntMap;
@@ -26,6 +27,7 @@ public class SuboptimalProfileRouterTest {
     @Test
     public void testSuboptimalRouting() {
         ProfileRequest request = new ProfileRequest();
+        McRaptorStatePool statePool = new McRaptorStatePool(50000);
         // near s1 and s1b
         request.fromLat = 40.02183;
         request.fromLon = -83.0889;
@@ -69,7 +71,7 @@ public class SuboptimalProfileRouterTest {
 
         // Run the profile router
         McRaptorSuboptimalPathProfileRouter router = new McRaptorSuboptimalPathProfileRouter(network, request,
-                accessTimesByMode, egressTimesByMode, (t) -> new SuboptimalDominatingList(request.suboptimalMinutes), null);
+                accessTimesByMode, egressTimesByMode, (t) -> new SuboptimalDominatingList(request.suboptimalMinutes), null, statePool);
 
         Collection<PathWithTimes> paths = router.getPaths();
 
