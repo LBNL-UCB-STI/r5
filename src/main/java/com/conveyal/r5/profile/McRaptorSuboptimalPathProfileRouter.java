@@ -12,6 +12,7 @@ import com.conveyal.r5.transit.TransportNetwork;
 import com.conveyal.r5.transit.TripFlag;
 import com.conveyal.r5.transit.TripPattern;
 import com.conveyal.r5.transit.TripSchedule;
+import gnu.trove.iterator.TIntIntIterator;
 import gnu.trove.list.TIntList;
 import gnu.trove.map.TIntIntMap;
 import gnu.trove.map.TIntObjectMap;
@@ -78,6 +79,9 @@ public class McRaptorSuboptimalPathProfileRouter {
     private final TIntObjectMap<Collection<McRaptorState>> bestStatesBeforeRound;
     private final TIntObjectMap<Collection<McRaptorState>> bestNonTransferStatesBeforeRound;
 
+    private List<int[]> travelTimeArrayPool = new ArrayList<>(200);
+    private int nextTravelTimeArray = 0;
+
     public McRaptorSuboptimalPathProfileRouter(
             TransportNetwork network,
             ProfileRequest req,
@@ -118,6 +122,7 @@ public class McRaptorSuboptimalPathProfileRouter {
         this.bestStatesBeforeRound = new TIntObjectHashMap<>(estimatedStops, 0.75f);
         this.bestNonTransferStatesBeforeRound = new TIntObjectHashMap<>(estimatedStops, 0.75f);
         this.statePool = statePool;
+
     }
 
     /**
@@ -156,6 +161,8 @@ public class McRaptorSuboptimalPathProfileRouter {
         this.servicesActive = network.transitLayer.getActiveServicesForDate(req.date);
         this.mersenneTwister = new MersenneTwister((int) (request.fromLat * 1e9));
         this.offsets = new FrequencyRandomOffsets(network.transitLayer);
+
+        nextTravelTimeArray = 0;
     }
 
     public McRaptorStatePool getStatePool() {
@@ -188,8 +195,9 @@ public class McRaptorSuboptimalPathProfileRouter {
                 });
                 return true;
             }));
-
-            LOG.info("{} patterns found near the destination", patternsNearDestination.cardinality());
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("{} patterns found near the destination", patternsNearDestination.cardinality());
+            }
         }
 
         List<McRaptorState> codominatingStatesToBeReturned = new ArrayList<>();
@@ -237,11 +245,14 @@ public class McRaptorSuboptimalPathProfileRouter {
                 LegMode mode = entry.getKey();
                 TIntIntMap times = entry.getValue();
 
-                times.forEachEntry((stop, accessTime) -> {
+                TIntIntIterator it = times.iterator();
+                while (it.hasNext()) {
+                    it.advance();
+                    int stop = it.key();
+                    int accessTime = it.value();
                     if (addState(stop, -1, -1, finalDepartureTime + accessTime, -1, -1, -1, null, mode))
                         touchedStops.set(stop);
-                    return true;
-                });
+                }
             }
 
             markPatterns();
@@ -259,11 +270,14 @@ public class McRaptorSuboptimalPathProfileRouter {
             if (collapseParetoSurfaceToTime != null) {
                 collateTravelTimes(departureTime);
             }
-
-            LOG.info("minute {} / {}", n + 1, request.monteCarloDraws);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("minute {} / {}", n + 1, request.monteCarloDraws);
+            }
         }
 
-        LOG.info("McRAPTOR took {}ms", System.currentTimeMillis() - startTime);
+        if (LOG.isInfoEnabled()) {
+            LOG.info("McRAPTOR took {}ms", System.currentTimeMillis() - startTime);
+        }
 
         // will be empty unless this is for a PointToPointQuery.
         return codominatingStatesToBeReturned;
@@ -333,8 +347,9 @@ public class McRaptorSuboptimalPathProfileRouter {
                 paths.put(pwt, pwt);
         });
         //states.forEach(s -> LOG.info("{}", s.dump(network)));
-
-        LOG.info("{} states led to {} paths", states.size(), paths.size());
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("{} states led to {} paths", states.size(), paths.size());
+        }
 
         paths.values().forEach(p -> LOG.info("{}", p.dump(network)));
 
@@ -347,9 +362,10 @@ public class McRaptorSuboptimalPathProfileRouter {
         bestStatesBeforeRound.clear();
         bestNonTransferStatesBeforeRound.clear();
 
+        // Just reference the collections directly (they won't change during this round)
         bestStates.forEachEntry((stop, bag) -> {
-            bestStatesBeforeRound.put(stop, new ArrayList<>(bag.getBestStates()));
-            bestNonTransferStatesBeforeRound.put(stop, new ArrayList<>(bag.getNonTransferStates()));
+            bestStatesBeforeRound.put(stop, bag.getBestStates());
+            bestNonTransferStatesBeforeRound.put(stop, bag.getNonTransferStates());
             return true;
         });
 
@@ -358,7 +374,7 @@ public class McRaptorSuboptimalPathProfileRouter {
             touchedPatterns.and(patternsNearDestination);
 
         for (int patIdx = touchedPatterns.nextSetBit(0); patIdx >= 0; patIdx = touchedPatterns.nextSetBit(patIdx + 1)) {
-            // ✅ Clear and reuse pattern-level collections (instead of creating new)
+            // Clear and reuse pattern-level collections (instead of creating new)
             statesPerPattern.clear();
             boardStopPositionInPattern.clear();
             boardTimeForFrequencyTrips.clear();
@@ -386,7 +402,7 @@ public class McRaptorSuboptimalPathProfileRouter {
                 boolean stopReachedViaDifferentPattern = bestStatesBeforeRound.containsKey(stop);
 
                 // get off the bus, if we can
-                // ✅ Use the field instead of local var
+                // Use the field instead of local var
                 for (McRaptorState state : statesPerPattern) {
                     int tripIndexInPattern = tripIndicesInPattern.get(state);
                     TripSchedule sched = pattern.tripSchedules.get(tripIndexInPattern);
@@ -430,7 +446,7 @@ public class McRaptorSuboptimalPathProfileRouter {
 
                                 int departure = tripSchedule.departures[stopPositionInPattern];
                                 if (departure > state.time + BOARD_SLACK) {
-                                    // ✅ Add to the field
+                                    // Add to the field
                                     statesPerPattern.add(state);
                                     tripIndicesInPattern.put(state, currentTrip);
                                     boardStopPositionInPattern.put(state, stopPositionInPattern);
@@ -588,7 +604,14 @@ public class McRaptorSuboptimalPathProfileRouter {
     }
 
     private void collateTravelTimes(int departureTime) {
-        int[] timesAtStopsThisIteration = new int[network.transitLayer.getStopCount()];
+        int[] timesAtStopsThisIteration;
+        if (nextTravelTimeArray < travelTimeArrayPool.size()) {
+            timesAtStopsThisIteration = travelTimeArrayPool.get(nextTravelTimeArray++);
+        } else {
+            timesAtStopsThisIteration = new int[network.transitLayer.getStopCount()];
+            travelTimeArrayPool.add(timesAtStopsThisIteration);
+            nextTravelTimeArray++;
+        }
         Arrays.fill(timesAtStopsThisIteration, FastRaptorWorker.UNREACHED);
 
         for (int stop = 0; stop < network.transitLayer.getStopCount(); stop++) {
@@ -677,7 +700,7 @@ public class McRaptorSuboptimalPathProfileRouter {
             }
         }
 
-        if (!bestStates.containsKey(stop)) bestStates.put(stop, createStateBag(departureTime));
+        if (!bestStates.containsKey(stop)) bestStates.put(stop, statePool.borrowStateBag(listSupplier, departureTime));
 
         McRaptorStateBag bag = bestStates.get(stop);
         boolean optimal = bag.add(state);
@@ -863,6 +886,13 @@ public class McRaptorSuboptimalPathProfileRouter {
             }
 
             return ret;
+        }
+
+        public void reset(IntFunction<DominatingList> listSupplier, int departureTime) {
+            // Can't reuse DominatingList objects easily since they need different factory configs
+            // So create fresh ones each time
+            this.best = listSupplier.apply(departureTime);
+            this.nonTransfer = listSupplier.apply(departureTime);
         }
 
         public Collection<McRaptorState> getBestStates () {

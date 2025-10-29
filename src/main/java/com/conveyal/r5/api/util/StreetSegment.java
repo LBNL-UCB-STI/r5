@@ -53,8 +53,9 @@ public class StreetSegment {
     public StreetSegment(StreetPath path, LegMode mode, StreetLayer streetLayer) {
         duration = path.getDuration();
         distance = path.getDistance();
-        streetEdges = new LinkedList<>();
-        List<org.locationtech.jts.geom.Coordinate> coordinates = new LinkedList<>();
+        int pathSize = path.getEdges().size();
+        streetEdges = new ArrayList<>(pathSize);
+        List<Coordinate> coordinates = new ArrayList<>(pathSize * 4); // ~4 coords per edge typically
 
         for (Integer edgeIdx : path.getEdges()) {
             EdgeStore.Edge edge = path.getEdge(edgeIdx);

@@ -1,6 +1,11 @@
 package com.conveyal.r5.streets;
 
+import com.conveyal.r5.profile.DominatingList;
 import com.conveyal.r5.profile.McRaptorSuboptimalPathProfileRouter;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.function.IntFunction;
 
 public class McRaptorStatePool {
     private final McRaptorSuboptimalPathProfileRouter.McRaptorState[] pool;
@@ -14,6 +19,10 @@ public class McRaptorStatePool {
 
     // Per-route tracking (reset before each route)
     private int exhaustionsSinceReset = 0;
+
+    private List<McRaptorSuboptimalPathProfileRouter.McRaptorStateBag> stateBagPool = new ArrayList<>(5000);
+    private int nextStateBag = 0;
+    private int maxStateBagsInUse = 0;
 
     public McRaptorStatePool(int poolSize) {
         this.pool = new McRaptorSuboptimalPathProfileRouter.McRaptorState[poolSize];
@@ -52,9 +61,27 @@ public class McRaptorStatePool {
         // Otherwise discard (pool is full or state was non-pooled)
     }
 
+    public McRaptorSuboptimalPathProfileRouter.McRaptorStateBag borrowStateBag(IntFunction<DominatingList> listSupplier, int departureTime) {
+        if (nextStateBag < stateBagPool.size()) {
+            McRaptorSuboptimalPathProfileRouter.McRaptorStateBag bag = stateBagPool.get(nextStateBag++);
+            bag.reset(listSupplier, departureTime);  // Reset and reconfigure
+            if (nextStateBag > maxStateBagsInUse) maxStateBagsInUse = nextStateBag;
+            return bag;
+        } else {
+            // Pool exhausted, create new
+            McRaptorSuboptimalPathProfileRouter.McRaptorStateBag bag = new McRaptorSuboptimalPathProfileRouter.McRaptorStateBag(() -> listSupplier.apply(departureTime));
+            stateBagPool.add(bag);
+            nextStateBag++;
+            if (nextStateBag > maxStateBagsInUse) maxStateBagsInUse = nextStateBag;
+            return bag;
+        }
+    }
+
     public void reset() {
         // Return all states to available
         nextAvailable = pool.length;
+        // Reset StateBag pool
+        nextStateBag = 0;
         // Reset per-route counter
         exhaustionsSinceReset = 0;
         currentlyInUse = 0;
