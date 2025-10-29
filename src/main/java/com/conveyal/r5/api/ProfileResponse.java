@@ -22,10 +22,10 @@ import static com.conveyal.r5.transit.TransitLayer.TRANSFER_DISTANCE_LIMIT_METER
 public class ProfileResponse {
 
     private static final Logger LOG = LoggerFactory.getLogger(ProfileResponse.class);
-    public List<ProfileOption> options = new ArrayList<>();
-    private Map<Integer, TripPattern> patterns = new HashMap<>();
+    public List<ProfileOption> options = new ArrayList<>(50);
+    private Map<Integer, TripPattern> patterns = new HashMap<>(100);
     //This is used to find which transfers are used in which Profileoption when calculating street transfers
-    private Multimap<Transfer, ProfileOption> transferToOption = HashMultimap.create();
+    private Multimap<Transfer, ProfileOption> transferToOption = HashMultimap.create(50, 3);
 
     @Override public String toString() {
         return "ProfileResponse{" +
@@ -33,7 +33,7 @@ public class ProfileResponse {
             '}';
     }
     //This connect which transits are in which profileOption
-    private Map<HashPath, ProfileOption> transitToOption = new HashMap<>();
+    private Map<HashPath, ProfileOption> transitToOption = new HashMap<>(100);
 
     public List<ProfileOption> getOptions() {
         return options;
@@ -42,6 +42,10 @@ public class ProfileResponse {
     public List<TripPattern> getPatterns() {
         //TODO: return as a map since I think it will be more usefull but GraphQL doesn't support map
         return new ArrayList<>(patterns.values());
+    }
+
+    public Multimap<Transfer, ProfileOption> getTransferToOption() {
+        return transferToOption;
     }
 
     public void addOption(ProfileOption option) {
@@ -74,12 +78,15 @@ public class ProfileResponse {
                                TransportNetwork transportNetwork, ZonedDateTime fromTimeDateZD) {
 
         HashPath hashPath = new HashPath(currentTransitPath);
-        ProfileOption profileOption = transitToOption.getOrDefault(hashPath, new ProfileOption());
-
-
-        if (profileOption.isEmpty()) {
-            LOG.debug("Creating new profile option");
+        ProfileOption profileOption = transitToOption.get(hashPath);
+        boolean isNewOption = (profileOption == null);
+        if (isNewOption) {
+            profileOption = new ProfileOption();
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Creating new profile option");
+            }
             options.add(profileOption);
+            transitToOption.put(hashPath, profileOption);
         }
 
         int startStopIndex = currentTransitPath.boardStops[0];
@@ -108,11 +115,11 @@ public class ProfileResponse {
                     StreetSegment streetSegment = new StreetSegment(streetPath, accessMode, transportNetwork.streetLayer);
                     profileOption.addAccess(streetSegment, accessMode, startVertexStopIndex);
                     //This should never happen since stopModeAccessMap is filled from reached stops in accessRouter
-                } else {
+                } else  if (LOG.isWarnEnabled()) {
                     LOG.warn("Access: Last state not found for mode:{} stop:{}({})", accessMode, startVertexStopIndex, startStopIndex);
                 }
             }
-        } else {
+        } else if (LOG.isWarnEnabled()) {
             LOG.warn("Mode is not in stopModeAccessMap for start stop:{}({})", startVertexStopIndex, startStopIndex);
         }
 
@@ -131,11 +138,11 @@ public class ProfileResponse {
                     StreetSegment streetSegment = new StreetSegment(streetPath, egressMode, transportNetwork.streetLayer);
                     profileOption.addEgress(streetSegment, egressMode, endVertexStopIndex);
                     //This should never happen since stopModeEgressMap is filled from reached stops in egressRouter
-                } else {
+                } else if (LOG.isWarnEnabled()) {
                     LOG.warn("EGRESS: Last state not found for mode:{} stop:{}({})", accessMode, endVertexStopIndex, endStopIndex);
                 }
             }
-        } else {
+        } else if (LOG.isWarnEnabled()) {
             LOG.warn("Mode is not in stopModeEgressMap for END stop:{}({})", endVertexStopIndex, endStopIndex);
         }
         List<TransitJourneyID> transitJourneyIDs = new ArrayList<>(currentTransitPath.patterns.length);
@@ -164,8 +171,6 @@ public class ProfileResponse {
         //What happens if we use Agency A in first transfer and B in second but at different time
         //Agency A and agency C at next transfer if stops are the same?
         profileOption.fares.addAll(DCFareCalculator.calculateFares(currentTransitPath, transportNetwork));
-
-        transitToOption.putIfAbsent(hashPath, profileOption);
     }
 
     /**
@@ -203,7 +208,7 @@ public class ProfileResponse {
                     for (ProfileOption profileOption: transferToOption.get(transfer)) {
                         profileOption.addMiddle(streetSegment, transfer);
                     }
-                } else {
+                } else if (LOG.isWarnEnabled()) {
                     LOG.warn("Street transfer: {} not found in streetlayer", transfer);
                 }
             }
