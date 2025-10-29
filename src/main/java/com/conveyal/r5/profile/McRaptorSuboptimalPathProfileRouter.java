@@ -330,7 +330,7 @@ public class McRaptorSuboptimalPathProfileRouter {
     }
 
     /** Perform a McRAPTOR search and extract paths */
-    public Collection<PathWithTimes> getPaths () {
+    public Collection<PathWithTimes> getPaths() {
         Collection<McRaptorState> states = route();
 
         // A map to keep track of the best path among each group of paths using the same sequence of patterns.
@@ -340,18 +340,25 @@ public class McRaptorSuboptimalPathProfileRouter {
         // We should instead wrap PathWithTimes or copy the relevant fields into a PatternSequenceKey class.
         Map<PathWithTimes, PathWithTimes> paths = new HashMap<>();
 
-        states.forEach(s -> {
-            PathWithTimes pwt = new PathWithTimes(s, network, request, accessTimes.get(s.accessMode), egressTimes.get(s.egressMode));
+        //  Manual iteration - no lambda allocation
+        for (McRaptorState s : states) {
+            PathWithTimes pwt = new PathWithTimes(
+                    s, network, request,
+                    accessTimes.get(s.accessMode),
+                    egressTimes.get(s.egressMode)
+            );
 
-            if (!paths.containsKey(pwt) || paths.get(pwt).stats.avg > pwt.stats.avg)
+            //  Single lookup instead of containsKey + get
+            PathWithTimes existing = paths.get(pwt);
+            if (existing == null || existing.stats.avg > pwt.stats.avg) {
                 paths.put(pwt, pwt);
-        });
-        //states.forEach(s -> LOG.info("{}", s.dump(network)));
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("{} states led to {} paths", states.size(), paths.size());
+            }
         }
 
-        paths.values().forEach(p -> LOG.info("{}", p.dump(network)));
+        if (LOG.isDebugEnabled()) {
+            LOG.debug("{} states led to {} paths", states.size(), paths.size());
+            paths.values().forEach(p -> LOG.debug("{}", p.dump(network)));
+        }
 
         return new ArrayList<>(paths.values());
     }
