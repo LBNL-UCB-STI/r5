@@ -82,6 +82,9 @@ public class McRaptorSuboptimalPathProfileRouter {
     private List<int[]> travelTimeArrayPool = new ArrayList<>(200);
     private int nextTravelTimeArray = 0;
 
+    private LegMode[] egressModesArray;
+    private TIntIntMap[] egressTimesArray;
+
     public McRaptorSuboptimalPathProfileRouter(
             TransportNetwork network,
             ProfileRequest req,
@@ -163,6 +166,21 @@ public class McRaptorSuboptimalPathProfileRouter {
         this.offsets = new FrequencyRandomOffsets(network.transitLayer);
 
         nextTravelTimeArray = 0;
+
+        if (egressTimes != null) {
+            int size = egressTimes.size();
+            this.egressModesArray = new LegMode[size];
+            this.egressTimesArray = new TIntIntMap[size];
+            int i = 0;
+            for (Map.Entry<LegMode, TIntIntMap> entry : egressTimes.entrySet()) {
+                this.egressModesArray[i] = entry.getKey();
+                this.egressTimesArray[i] = entry.getValue();
+                i++;
+            }
+        } else {
+            this.egressModesArray = null;
+            this.egressTimesArray = null;
+        }
     }
 
     public McRaptorStatePool getStatePool() {
@@ -718,19 +736,19 @@ public class McRaptorSuboptimalPathProfileRouter {
 
         // target pruning: keep track of best time at destination
         if (egressTimes != null && optimal && pattern != -1) {
-            int[] egressTimeWithSlowestEgressMode = new int[] { -1 };
+            int egressTimeWithSlowestEgressMode = -1;
 
-            // Manual iteration to avoid lambda allocation
-            for (Map.Entry<LegMode, TIntIntMap> entry : egressTimes.entrySet()) {
-                TIntIntMap times = entry.getValue();
+            // Array iteration - no iterator allocation!
+            for (int i = 0; i < egressModesArray.length; i++) {
+                TIntIntMap times = egressTimesArray[i];
                 if (!times.containsKey(stop)) continue;
                 int timeAtDest = time + times.get(stop);
-                egressTimeWithSlowestEgressMode[0] = Math.max(egressTimeWithSlowestEgressMode[0], timeAtDest);
+                egressTimeWithSlowestEgressMode = Math.max(egressTimeWithSlowestEgressMode, timeAtDest);
             }
 
-            if (egressTimeWithSlowestEgressMode[0] != -1 &&
-                    egressTimeWithSlowestEgressMode[0] < bestTimesAtTargetByAccessMode.get(accessMode)) {
-                bestTimesAtTargetByAccessMode.put(accessMode, egressTimeWithSlowestEgressMode[0]);
+            if (egressTimeWithSlowestEgressMode != -1 &&
+                    egressTimeWithSlowestEgressMode < bestTimesAtTargetByAccessMode.get(accessMode)) {
+                bestTimesAtTargetByAccessMode.put(accessMode, egressTimeWithSlowestEgressMode);
             }
         }
 
