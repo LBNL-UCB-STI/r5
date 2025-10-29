@@ -24,6 +24,13 @@ public class SuboptimalDominatingList implements DominatingList {
 
     private List<McRaptorSuboptimalPathProfileRouter.McRaptorState> states = new ArrayList<>(128);
 
+    @Override
+    public void reset() {
+        states.clear();  // Clears but keeps 128 capacity
+        bestTime = Integer.MAX_VALUE;  // Reset to initial value
+        // suboptimalSeconds stays the same (it's configuration)
+    }
+
     public boolean add (McRaptorSuboptimalPathProfileRouter.McRaptorState newState) {
         // apply strict dominance if there is a state at the previous round on the same previous pattern arriving at this
         // stop (prevents reboarding/hopping between routes on common trunks)

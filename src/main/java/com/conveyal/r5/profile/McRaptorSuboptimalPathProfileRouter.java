@@ -914,10 +914,9 @@ public class McRaptorSuboptimalPathProfileRouter {
         }
 
         public void reset(IntFunction<DominatingList> listSupplier, int departureTime) {
-            // Can't reuse DominatingList objects easily since they need different factory configs
-            // So create fresh ones each time
-            this.best = listSupplier.apply(departureTime);
-            this.nonTransfer = listSupplier.apply(departureTime);
+            // Just reset existing lists instead of creating new ones
+            best.reset();
+            nonTransfer.reset();
         }
 
         public Collection<McRaptorState> getBestStates () {

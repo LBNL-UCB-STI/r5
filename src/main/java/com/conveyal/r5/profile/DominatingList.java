@@ -22,6 +22,9 @@ public interface DominatingList {
      * undominated */
     boolean add (McRaptorSuboptimalPathProfileRouter.McRaptorState state);
 
+    /** Reset this list for reuse, clearing all states but keeping allocated capacity */
+    void reset();
+
     /** get non-dominated states at this location */
     Collection<McRaptorSuboptimalPathProfileRouter.McRaptorState> getNonDominatedStates ();
 }
