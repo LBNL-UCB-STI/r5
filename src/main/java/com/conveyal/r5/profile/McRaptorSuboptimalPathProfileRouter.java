@@ -14,6 +14,7 @@ import com.conveyal.r5.transit.TripPattern;
 import com.conveyal.r5.transit.TripSchedule;
 import gnu.trove.iterator.TIntIntIterator;
 import gnu.trove.list.TIntList;
+import gnu.trove.list.array.TIntArrayList;
 import gnu.trove.map.TIntIntMap;
 import gnu.trove.map.TIntObjectMap;
 import gnu.trove.map.TObjectIntMap;
@@ -78,6 +79,7 @@ public class McRaptorSuboptimalPathProfileRouter {
     private final TObjectIntMap<McRaptorState> tripIndicesInPattern;
     private final TIntObjectMap<Collection<McRaptorState>> bestStatesBeforeRound;
     private final TIntObjectMap<Collection<McRaptorState>> bestNonTransferStatesBeforeRound;
+    private TIntArrayList touchedStopsInRound = new TIntArrayList(1000);
 
     private List<int[]> travelTimeArrayPool = new ArrayList<>(200);
     private int nextTravelTimeArray = 0;
@@ -124,6 +126,7 @@ public class McRaptorSuboptimalPathProfileRouter {
         this.tripIndicesInPattern = new TObjectIntHashMap<>(100, 0.75f, -1);
         this.bestStatesBeforeRound = new TIntObjectHashMap<>(estimatedStops, 0.75f);
         this.bestNonTransferStatesBeforeRound = new TIntObjectHashMap<>(estimatedStops, 0.75f);
+
         this.statePool = statePool;
 
         if (egressTimes != null) {
@@ -386,14 +389,19 @@ public class McRaptorSuboptimalPathProfileRouter {
 
     /** perform one round of the McRAPTOR search. Returns true if anything changed */
     private boolean doOneRound() {
-        // Clear and reuse the round-level collections
-        bestStatesBeforeRound.clear();
-        bestNonTransferStatesBeforeRound.clear();
+        // Step 1: Remove ONLY the stops we touched last round
+        for (int i = 0; i < touchedStopsInRound.size(); i++) {
+            int stop = touchedStopsInRound.get(i);
+            bestStatesBeforeRound.remove(stop);  // Remove 1 entry
+            bestNonTransferStatesBeforeRound.remove(stop);  // Remove 1 entry
+        }
+        touchedStopsInRound.resetQuick();  // Just sets size=0, no array clearing
 
         // Just reference the collections directly (they won't change during this round)
         bestStates.forEachEntry((stop, bag) -> {
             bestStatesBeforeRound.put(stop, bag.getBestStates());
             bestNonTransferStatesBeforeRound.put(stop, bag.getNonTransferStates());
+            touchedStopsInRound.add(stop);
             return true;
         });
 
