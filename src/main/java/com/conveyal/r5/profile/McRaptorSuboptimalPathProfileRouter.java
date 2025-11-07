@@ -14,7 +14,6 @@ import com.conveyal.r5.transit.TripPattern;
 import com.conveyal.r5.transit.TripSchedule;
 import gnu.trove.iterator.TIntIntIterator;
 import gnu.trove.list.TIntList;
-import gnu.trove.list.array.TIntArrayList;
 import gnu.trove.map.TIntIntMap;
 import gnu.trove.map.TIntObjectMap;
 import gnu.trove.map.TObjectIntMap;
@@ -74,12 +73,12 @@ public class McRaptorSuboptimalPathProfileRouter {
     /** In order to properly do target pruning we store the best times at each target _by access mode_, so car trips don't quash walk trips */
     private TObjectIntMap<LegMode> bestTimesAtTargetByAccessMode = new TObjectIntHashMap<>(4, 0.95f, Integer.MAX_VALUE);
     private final List<McRaptorState> statesPerPattern;
-    private final TObjectIntMap<McRaptorState> boardStopPositionInPattern;
-    private final TObjectIntMap<McRaptorState> boardTimeForFrequencyTrips;
-    private final TObjectIntMap<McRaptorState> tripIndicesInPattern;
+    private int[] boardStopPositionsArray;
+    private int[] boardTimesForFrequencyArray;
+    private int[] tripIndicesArray;
+    private int statesPerPatternSize;  // Track logical size
     private final TIntObjectMap<Collection<McRaptorState>> bestStatesBeforeRound;
     private final TIntObjectMap<Collection<McRaptorState>> bestNonTransferStatesBeforeRound;
-    private TIntArrayList touchedStopsInRound = new TIntArrayList(1000);
 
     private List<int[]> travelTimeArrayPool = new ArrayList<>(200);
     private int nextTravelTimeArray = 0;
@@ -121,9 +120,10 @@ public class McRaptorSuboptimalPathProfileRouter {
         int estimatedStops = Math.min(network.transitLayer.getStopCount(), 10000);
         this.bestStates = new TIntObjectHashMap<>(estimatedStops, 0.75f);
         this.statesPerPattern = new ArrayList<>(100);
-        this.boardStopPositionInPattern = new TObjectIntHashMap<>(100, 0.75f, -1);
-        this.boardTimeForFrequencyTrips = new TObjectIntHashMap<>(100, 0.75f, -1);
-        this.tripIndicesInPattern = new TObjectIntHashMap<>(100, 0.75f, -1);
+        this.boardStopPositionsArray = new int[100];
+        this.boardTimesForFrequencyArray = new int[100];
+        this.tripIndicesArray = new int[100];
+        this.statesPerPatternSize = 0;
         this.bestStatesBeforeRound = new TIntObjectHashMap<>(estimatedStops, 0.75f);
         this.bestNonTransferStatesBeforeRound = new TIntObjectHashMap<>(estimatedStops, 0.75f);
 
@@ -183,6 +183,8 @@ public class McRaptorSuboptimalPathProfileRouter {
         this.offsets = new FrequencyRandomOffsets(network.transitLayer);
 
         nextTravelTimeArray = 0;
+
+        this.statesPerPatternSize = 0;
     }
 
     public McRaptorStatePool getStatePool() {
@@ -387,21 +389,27 @@ public class McRaptorSuboptimalPathProfileRouter {
         return new ArrayList<>(paths.values());
     }
 
+    private void ensureCapacity(int needed) {
+        if (needed > statesPerPattern.size()) {
+            // Grow list
+            while (statesPerPattern.size() < needed) {
+                statesPerPattern.add(null);
+            }
+        }
+        if (needed > boardStopPositionsArray.length) {
+            // Grow arrays
+            int newCapacity = Math.max(needed, boardStopPositionsArray.length * 2);
+            boardStopPositionsArray = Arrays.copyOf(boardStopPositionsArray, newCapacity);
+            boardTimesForFrequencyArray = Arrays.copyOf(boardTimesForFrequencyArray, newCapacity);
+            tripIndicesArray = Arrays.copyOf(tripIndicesArray, newCapacity);
+        }
+    }
+
     /** perform one round of the McRAPTOR search. Returns true if anything changed */
     private boolean doOneRound() {
-        // Step 1: Remove ONLY the stops we touched last round
-        for (int i = 0; i < touchedStopsInRound.size(); i++) {
-            int stop = touchedStopsInRound.get(i);
-            bestStatesBeforeRound.remove(stop);  // Remove 1 entry
-            bestNonTransferStatesBeforeRound.remove(stop);  // Remove 1 entry
-        }
-        touchedStopsInRound.resetQuick();  // Just sets size=0, no array clearing
-
-        // Just reference the collections directly (they won't change during this round)
         bestStates.forEachEntry((stop, bag) -> {
             bestStatesBeforeRound.put(stop, bag.getBestStates());
             bestNonTransferStatesBeforeRound.put(stop, bag.getNonTransferStates());
-            touchedStopsInRound.add(stop);
             return true;
         });
 
@@ -411,10 +419,7 @@ public class McRaptorSuboptimalPathProfileRouter {
 
         for (int patIdx = touchedPatterns.nextSetBit(0); patIdx >= 0; patIdx = touchedPatterns.nextSetBit(patIdx + 1)) {
             // Clear and reuse pattern-level collections (instead of creating new)
-            statesPerPattern.clear();
-            boardStopPositionInPattern.clear();
-            boardTimeForFrequencyTrips.clear();
-            tripIndicesInPattern.clear();
+            statesPerPatternSize = 0;
 
             TripPattern pattern = network.transitLayer.tripPatterns.get(patIdx);
             RouteInfo routeInfo = network.transitLayer.routes.get(pattern.routeIndex);
@@ -439,17 +444,20 @@ public class McRaptorSuboptimalPathProfileRouter {
 
                 // get off the bus, if we can
                 // Use the field instead of local var
-                for (McRaptorState state : statesPerPattern) {
-                    int tripIndexInPattern = tripIndicesInPattern.get(state);
+                for (int i = 0; i < statesPerPatternSize; i++) {
+                    McRaptorState state = statesPerPattern.get(i);
+                    int tripIndexInPattern = tripIndicesArray[i];
+                    int boardStopPosition = boardStopPositionsArray[i];
                     TripSchedule sched = pattern.tripSchedules.get(tripIndexInPattern);
-                    int boardStopPosition = boardStopPositionInPattern.get(state);
-                    int arrival, boardTime;
+                    int boardTime = boardTimesForFrequencyArray[i];
+                    int arrival;  // Declare arrival here
 
                     if (sched.headwaySeconds != null) {
+                        // For frequency trips, boardTime is already loaded from the array
                         int travelTimeToStop = sched.arrivals[stopPositionInPattern] - sched.departures[boardStopPosition];
-                        boardTime = boardTimeForFrequencyTrips.get(state);
                         arrival = boardTime + travelTimeToStop;
                     } else {
+                        // For scheduled trips, get both from the schedule
                         arrival = sched.arrivals[stopPositionInPattern];
                         boardTime = sched.departures[boardStopPosition];
                     }
@@ -483,9 +491,11 @@ public class McRaptorSuboptimalPathProfileRouter {
                                 int departure = tripSchedule.departures[stopPositionInPattern];
                                 if (departure > state.time + BOARD_SLACK) {
                                     // Add to the field
-                                    statesPerPattern.add(state);
-                                    tripIndicesInPattern.put(state, currentTrip);
-                                    boardStopPositionInPattern.put(state, stopPositionInPattern);
+                                    ensureCapacity(statesPerPatternSize + 1);
+                                    statesPerPattern.set(statesPerPatternSize, state);
+                                    tripIndicesArray[statesPerPatternSize] = currentTrip;
+                                    boardStopPositionsArray[statesPerPatternSize] = stopPositionInPattern;
+                                    statesPerPatternSize++;
 
                                     // we found the best trip we can board at this stop based on travel time (we know this because trips
                                     // are sorted by departure time from first stop), break loop regardless of whether
@@ -539,10 +549,12 @@ public class McRaptorSuboptimalPathProfileRouter {
                                     // on end time may not actually occur
                                     if (departure > latestDeparture) continue;
 
-                                    statesPerPattern.add(state);
-                                    tripIndicesInPattern.put(state, currentTrip);
-                                    boardTimeForFrequencyTrips.put(state, departure);
-                                    boardStopPositionInPattern.put(state, stopPositionInPattern);
+                                    ensureCapacity(statesPerPatternSize + 1);
+                                    statesPerPattern.set(statesPerPatternSize, state);
+                                    tripIndicesArray[statesPerPatternSize] = currentTrip;
+                                    boardTimesForFrequencyArray[statesPerPatternSize] = departure;  // Note: 'departure', not boardTime
+                                    boardStopPositionsArray[statesPerPatternSize] = stopPositionInPattern;
+                                    statesPerPatternSize++;
                                 }
                             }
                         }

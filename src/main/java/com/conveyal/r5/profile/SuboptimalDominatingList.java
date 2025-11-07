@@ -31,6 +31,14 @@ public class SuboptimalDominatingList implements DominatingList {
         // suboptimalSeconds stays the same (it's configuration)
     }
 
+    private void swapAndRemove(int index) {
+        int lastIdx = states.size() - 1;
+        if (index != lastIdx) {
+            states.set(index, states.get(lastIdx));
+        }
+        states.remove(lastIdx);
+    }
+
     public boolean add (McRaptorSuboptimalPathProfileRouter.McRaptorState newState) {
         // apply strict dominance if there is a state at the previous round on the same previous pattern arriving at this
         // stop (prevents reboarding/hopping between routes on common trunks)
@@ -80,12 +88,12 @@ public class SuboptimalDominatingList implements DominatingList {
 
             // Check if new dominates old
             if (sameAccessMode && newRound < oldState.round && newTime <= oldState.time) {
-                states.remove(i); // Safe to remove since looping backwards
+                swapAndRemove(i);// Safe to remove since looping backwards
                 continue;
             }
 
             if (newTime + threshold < oldState.time) {
-                states.remove(i);
+                swapAndRemove(i);
             }
         }
 
