@@ -98,7 +98,7 @@ public class SuboptimalDominatingList implements DominatingList {
             }
 
             // Only decrement if we didn't remove (if we removed, check the swapped element)
-            if (!removed) {
+            if (!removed || i >= states.size()) {
                 i--;
             }
         }

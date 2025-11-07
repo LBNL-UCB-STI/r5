@@ -5,6 +5,7 @@ import com.conveyal.r5.analyst.fare.InRoutingFareCalculator;
 import com.conveyal.r5.api.util.LegMode;
 import com.conveyal.r5.api.util.TransitModes;
 import com.conveyal.r5.streets.McRaptorStatePool;
+import gnu.trove.list.array.TIntArrayList;
 import com.conveyal.r5.streets.StreetRouter;
 import com.conveyal.r5.transit.RouteInfo;
 import com.conveyal.r5.transit.TransitLayer;
@@ -77,6 +78,7 @@ public class McRaptorSuboptimalPathProfileRouter {
     private int[] boardTimesForFrequencyArray;
     private int[] tripIndicesArray;
     private int statesPerPatternSize;  // Track logical size
+    private TIntArrayList touchedStopsInRound = new TIntArrayList(1000);
     private final TIntObjectMap<Collection<McRaptorState>> bestStatesBeforeRound;
     private final TIntObjectMap<Collection<McRaptorState>> bestNonTransferStatesBeforeRound;
 
@@ -407,9 +409,17 @@ public class McRaptorSuboptimalPathProfileRouter {
 
     /** perform one round of the McRAPTOR search. Returns true if anything changed */
     private boolean doOneRound() {
+        for (int i = 0; i < touchedStopsInRound.size(); i++) {
+            int stop = touchedStopsInRound.get(i);
+            bestStatesBeforeRound.remove(stop);
+            bestNonTransferStatesBeforeRound.remove(stop);
+        }
+        touchedStopsInRound.resetQuick();
+
         bestStates.forEachEntry((stop, bag) -> {
             bestStatesBeforeRound.put(stop, bag.getBestStates());
             bestNonTransferStatesBeforeRound.put(stop, bag.getNonTransferStates());
+            touchedStopsInRound.add(stop);
             return true;
         });
 
