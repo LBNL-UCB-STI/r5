@@ -7,9 +7,8 @@ import com.conveyal.r5.profile.ProfileRequest;
 import com.conveyal.r5.profile.StreetMode;
 import com.conveyal.r5.transit.TransitLayer;
 import com.conveyal.r5.transit.TransportNetwork;
-import com.conveyal.r5.util.TIntObjectHashMultimap;
-import com.conveyal.r5.util.TIntObjectMultimap;
 import com.conveyal.r5.util.TIntObjectSingleValueOptimizedMultimap;
+import gnu.trove.iterator.TIntIntIterator;
 import gnu.trove.iterator.TIntIterator;
 import gnu.trove.list.TIntList;
 import gnu.trove.map.TIntIntMap;
@@ -936,12 +935,17 @@ public class StreetRouter {
         // more at the same location.
         if (s1.turnRestrictions != null && s2.turnRestrictions != null &&
             s1.turnRestrictions.size() == s2.turnRestrictions.size()) {
-                boolean[] same = new boolean[]{true}; // Trick to circumvent java "effectively final" ridiculousness.
-                s1.turnRestrictions.forEachEntry((ridx, pos) -> {
-                    if (!s2.turnRestrictions.containsKey(ridx) || s2.turnRestrictions.get(ridx) != pos) same[0] = false;
-                    return same[0]; // Continue iteration until a difference is discovered, then bail out.
-                });
-                if (same[0]) return true; // s1 dominates s2 because it has the same turn restrictions.
+                boolean same = true;
+                TIntIntIterator it = s1.turnRestrictions.iterator();
+                while (it.hasNext() && same) {
+                    it.advance();
+                    int ridx = it.key();
+                    int pos = it.value();
+                    if (!s2.turnRestrictions.containsKey(ridx) || s2.turnRestrictions.get(ridx) != pos) {
+                        same = false;
+                    }
+                }
+            return same; // s1 dominates s2 because it has the same turn restrictions.
                 // TODO shouldn't we add a test to see which one has the lower dominance variable, just to make this more principled?
                 // As in: states are comparable only when they have the same set of turn restrictions.
         }
