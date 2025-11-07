@@ -10,4 +10,5 @@ public interface TIntIntMultimap {
     TIntCollection get (int key);
     boolean containsKey (int key);
     TIntCollection removeAll (int key);
+    int size();
 }

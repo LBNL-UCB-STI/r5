@@ -11,6 +11,8 @@ import com.conveyal.r5.trove.TLongAugmentedList;
 import com.conveyal.r5.util.P2;
 import com.conveyal.r5.util.TIntIntHashMultimap;
 import com.conveyal.r5.util.TIntIntMultimap;
+import gnu.trove.TIntCollection;
+import gnu.trove.iterator.TIntIterator;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.LineString;
@@ -291,6 +293,12 @@ public class EdgeStore implements Serializable {
 
     }
 
+    public boolean hasTurnRestrictions() {
+        // Check if either map has entries
+        // Assuming TIntIntHashMultimap has a size() or isEmpty() method
+        return turnRestrictions.size() > 0 || turnRestrictionsReverse.size() > 0;
+    }
+
     /**
      * This creates the bare topological edge pair with a length.
      * Flags, detailed geometry, etc. must be set subsequently using an edge cursor.
@@ -351,33 +359,25 @@ public class EdgeStore implements Serializable {
      * @param s1 new state
      */
     void startTurnRestriction(StreetMode streetMode, boolean reverseSearch,
-        StreetRouter.State s1) {
-        if (reverseSearch) {
-            // add turn restrictions that start on this edge
-            // Turn restrictions only apply to cars for now. This is also coded in canTurnFrom, so change it both places
-            // if/when it gets changed.
-            if (streetMode == StreetMode.CAR && turnRestrictionsReverse.containsKey(s1.backEdge)) {
-                if (s1.turnRestrictions == null)
-                    s1.turnRestrictions = new TIntIntHashMap();
-                turnRestrictionsReverse.get(s1.backEdge).forEach(r -> {
-                    s1.turnRestrictions.put(r, 1); // we have traversed one edge
-                    return true; // continue iteration
-                });
-                //LOG.info("RRTADD: S1:{}|{}", s1.backEdge, s1.turnRestrictions);
-            }
-        } else {
-            // add turn restrictions that start on this edge
-            // Turn restrictions only apply to cars for now. This is also coded in canTurnFrom, so change it both places
-            // if/when it gets changed.
-            if (streetMode == StreetMode.CAR && turnRestrictions.containsKey(s1.backEdge)) {
-                if (s1.turnRestrictions == null)
-                    s1.turnRestrictions = new TIntIntHashMap();
-                turnRestrictions.get(s1.backEdge).forEach(r -> {
-                    s1.turnRestrictions.put(r, 1); // we have traversed one edge
-                    return true; // continue iteration
-                });
-                //LOG.info("TADD: S1:{}|{}", s1.backEdge, s1.turnRestrictions);
-            }
+                              StreetRouter.State s1) {
+
+        // FAST PATH: Exit immediately if no turn restrictions exist anywhere
+        if (streetMode != StreetMode.CAR || !hasTurnRestrictions()) {
+            return;
+        }
+
+        TIntIntMultimap restrictions = reverseSearch ? turnRestrictionsReverse : turnRestrictions;
+
+        TIntCollection values = restrictions.get(s1.backEdge);
+        if (values == null || values.isEmpty()) return;
+
+        if (s1.turnRestrictions == null) {
+            s1.turnRestrictions = new TIntIntHashMap();
+        }
+
+        TIntIterator it = values.iterator();
+        while (it.hasNext()) {
+            s1.turnRestrictions.put(it.next(), 1);
         }
     }
 
