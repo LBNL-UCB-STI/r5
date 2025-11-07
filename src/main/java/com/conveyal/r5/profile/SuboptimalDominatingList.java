@@ -70,7 +70,8 @@ public class SuboptimalDominatingList implements DominatingList {
         final int newRound = newState.round;
         final LegMode newAccessMode = newState.accessMode;
 
-        for (int i = states.size() - 1; i >= 0; i--) {
+        int i = states.size() - 1;
+        while (i >= 0) {
             McRaptorSuboptimalPathProfileRouter.McRaptorState oldState = states.get(i);
 
             // Inline dominance check to avoid function call overhead
@@ -87,13 +88,18 @@ public class SuboptimalDominatingList implements DominatingList {
             }
 
             // Check if new dominates old
+            boolean removed = false;
             if (sameAccessMode && newRound < oldState.round && newTime <= oldState.time) {
                 swapAndRemove(i);// Safe to remove since looping backwards
-                continue;
+                removed = true;
+            } else if (newTime + threshold < oldState.time) {
+                swapAndRemove(i);
+                removed = true;
             }
 
-            if (newTime + threshold < oldState.time) {
-                swapAndRemove(i);
+            // Only decrement if we didn't remove (if we removed, check the swapped element)
+            if (!removed) {
+                i--;
             }
         }
 
