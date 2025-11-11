@@ -79,6 +79,7 @@ public class McRaptorSuboptimalPathProfileRouter {
     private int[] tripIndicesArray;
     private int statesPerPatternSize;  // Track logical size
     private TIntArrayList touchedStopsInRound = new TIntArrayList(1000);
+    private int touchedStopsInRoundSize = 0;
     private final TIntObjectMap<Collection<McRaptorState>> bestStatesBeforeRound;
     private final TIntObjectMap<Collection<McRaptorState>> bestNonTransferStatesBeforeRound;
 
@@ -187,6 +188,7 @@ public class McRaptorSuboptimalPathProfileRouter {
         nextTravelTimeArray = 0;
 
         this.statesPerPatternSize = 0;
+        this.touchedStopsInRoundSize = 0;
     }
 
     public McRaptorStatePool getStatePool() {
@@ -409,17 +411,22 @@ public class McRaptorSuboptimalPathProfileRouter {
 
     /** perform one round of the McRAPTOR search. Returns true if anything changed */
     private boolean doOneRound() {
-        for (int i = 0; i < touchedStopsInRound.size(); i++) {
+        for (int i = 0; i < touchedStopsInRoundSize; i++) {
             int stop = touchedStopsInRound.get(i);
             bestStatesBeforeRound.remove(stop);
             bestNonTransferStatesBeforeRound.remove(stop);
         }
-        touchedStopsInRound.resetQuick();
+        touchedStopsInRoundSize = 0;
 
         bestStates.forEachEntry((stop, bag) -> {
             bestStatesBeforeRound.put(stop, bag.getBestStates());
             bestNonTransferStatesBeforeRound.put(stop, bag.getNonTransferStates());
-            touchedStopsInRound.add(stop);
+            if (touchedStopsInRoundSize < touchedStopsInRound.size()) {
+                touchedStopsInRound.set(touchedStopsInRoundSize++, stop);
+            } else {
+                touchedStopsInRound.add(stop);
+                touchedStopsInRoundSize++;
+            }
             return true;
         });
 
