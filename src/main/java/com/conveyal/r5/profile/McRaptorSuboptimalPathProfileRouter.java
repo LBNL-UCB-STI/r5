@@ -5,7 +5,6 @@ import com.conveyal.r5.analyst.fare.InRoutingFareCalculator;
 import com.conveyal.r5.api.util.LegMode;
 import com.conveyal.r5.api.util.TransitModes;
 import com.conveyal.r5.streets.McRaptorStatePool;
-import gnu.trove.list.array.TIntArrayList;
 import com.conveyal.r5.streets.StreetRouter;
 import com.conveyal.r5.transit.RouteInfo;
 import com.conveyal.r5.transit.TransitLayer;
@@ -78,7 +77,9 @@ public class McRaptorSuboptimalPathProfileRouter {
     private int[] boardTimesForFrequencyArray;
     private int[] tripIndicesArray;
     private int statesPerPatternSize;  // Track logical size
-    private TIntArrayList touchedStopsInRound = new TIntArrayList(1000);
+    private int[] touchedStopsLastRound = new int[1000];
+    private int[] touchedStopsInRound = new int[1000];
+    private int touchedStopsLastRoundSize = 0;
     private int touchedStopsInRoundSize = 0;
     private final TIntObjectMap<Collection<McRaptorState>> bestStatesBeforeRound;
     private final TIntObjectMap<Collection<McRaptorState>> bestNonTransferStatesBeforeRound;
@@ -189,6 +190,7 @@ public class McRaptorSuboptimalPathProfileRouter {
 
         this.statesPerPatternSize = 0;
         this.touchedStopsInRoundSize = 0;
+        this.touchedStopsLastRoundSize = 0;
     }
 
     public McRaptorStatePool getStatePool() {
@@ -409,26 +411,40 @@ public class McRaptorSuboptimalPathProfileRouter {
         }
     }
 
+    private void ensureStopCapacity(int needed) {
+        if (needed > touchedStopsInRound.length) {
+            int newCapacity = Math.max(needed, touchedStopsInRound.length * 2);
+            touchedStopsInRound = Arrays.copyOf(touchedStopsInRound, newCapacity);
+            touchedStopsLastRound = Arrays.copyOf(touchedStopsLastRound, newCapacity);
+        }
+    }
+
     /** perform one round of the McRAPTOR search. Returns true if anything changed */
     private boolean doOneRound() {
-        for (int i = 0; i < touchedStopsInRoundSize; i++) {
-            int stop = touchedStopsInRound.get(i);
+        for (int i = 0; i < touchedStopsLastRoundSize; i++) {
+            int stop = touchedStopsLastRound[i];
             bestStatesBeforeRound.remove(stop);
             bestNonTransferStatesBeforeRound.remove(stop);
         }
+        // Populate new entries and track which stops we touched this round
         touchedStopsInRoundSize = 0;
 
         bestStates.forEachEntry((stop, bag) -> {
             bestStatesBeforeRound.put(stop, bag.getBestStates());
             bestNonTransferStatesBeforeRound.put(stop, bag.getNonTransferStates());
-            if (touchedStopsInRoundSize < touchedStopsInRound.size()) {
-                touchedStopsInRound.set(touchedStopsInRoundSize++, stop);
-            } else {
-                touchedStopsInRound.add(stop);
-                touchedStopsInRoundSize++;
-            }
+
+            // Track this stop for next round's cleanup
+            ensureStopCapacity(touchedStopsInRoundSize + 1);
+            touchedStopsInRound[touchedStopsInRoundSize++] = stop;
+
             return true;
         });
+
+        // Swap arrays for next round (zero allocation!)
+        int[] temp = touchedStopsLastRound;
+        touchedStopsLastRound = touchedStopsInRound;
+        touchedStopsInRound = temp;
+        touchedStopsLastRoundSize = touchedStopsInRoundSize;
 
         // optimization: on the last round, only explore patterns near the destination in a point to point search
         if (round == request.maxRides && egressTimes != null)
