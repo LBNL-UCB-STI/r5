@@ -294,6 +294,12 @@ public class McRaptorSuboptimalPathProfileRouter {
             // NB the walk search is an initial round, so MAX_ROUNDS + 1
             while (doOneRound() && round < request.maxRides + 1);
 
+            for (int i = 0; i < touchedStopsLastRoundSize; i++) {
+                int stop = touchedStopsLastRound[i];
+                bestStatesBeforeRound.remove(stop);
+                bestNonTransferStatesBeforeRound.remove(stop);
+            }
+
             // TODO this means we wind up with some duplicated states.
             if (egressTimes != null) {
                 // In a PointToPointQuery (for Modeify), egressTimes will already be computed
@@ -452,6 +458,9 @@ public class McRaptorSuboptimalPathProfileRouter {
 
         for (int patIdx = touchedPatterns.nextSetBit(0); patIdx >= 0; patIdx = touchedPatterns.nextSetBit(patIdx + 1)) {
             // Clear and reuse pattern-level collections (instead of creating new)
+            for (int i = 0; i < statesPerPatternSize; i++) {
+                statesPerPattern.set(i, null);
+            }
             statesPerPatternSize = 0;
 
             TripPattern pattern = network.transitLayer.tripPatterns.get(patIdx);
