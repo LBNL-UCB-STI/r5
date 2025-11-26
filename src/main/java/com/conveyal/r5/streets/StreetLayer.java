@@ -1055,6 +1055,17 @@ public class StreetLayer implements Serializable, Cloneable {
         int beginVertexIndex = getVertexIndexForOsmNode(beginOsmNodeId);
         int endVertexIndex = getVertexIndexForOsmNode(endOsmNodeId);
 
+        // ============ SAFETY NET: Catch self-loops from ANY source ============
+        if (beginVertexIndex == endVertexIndex) {
+            LOG.error("Skipping self-loop edge from OSM way {} (nodes {} -> {} both map to vertex {}). " +
+                            "Length tag claims {}m but edge has zero geometric length. " +
+                            "This is corrupt OSM data - likely from OSMnx bug or manual edit error.",
+                    osmID, beginOsmNodeId, endOsmNodeId, beginVertexIndex,
+                    way.getTag("length"));
+            return;  // Skip this edge entirely
+        }
+        // ============ END SAFETY NET ============
+
         // Fetch the OSM node objects for this subsection of the OSM way.
         int nNodes = endIdx - beginIdx + 1;
         List<Node> nodes = new ArrayList<>(nNodes);
