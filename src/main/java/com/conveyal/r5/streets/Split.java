@@ -333,11 +333,11 @@ public class Split {
 
         // Additional safety check: ensure non-negative distances
         if (result.distance0_mm < 0) {
-            LOG.warn("Calculated distance0_mm was negative ({}), setting to 0", result.distance0_mm);
+            LOG.debug("Calculated distance0_mm was negative ({}), setting to 0", result.distance0_mm);
             result.distance0_mm = 0;
         }
         if (result.distance1_mm < 0) {
-            LOG.warn("Calculated distance1_mm was negative ({}), setting to 0", result.distance1_mm);
+            LOG.debug("Calculated distance1_mm was negative ({}), setting to 0", result.distance1_mm);
             result.distance1_mm = 0;
         }
 
@@ -349,30 +349,6 @@ public class Split {
         if (result.distance1_mm == 0 && totalSplitLength <= edgeLengthMm) {
             result.distance0_mm = edgeLengthMm;
         }
-
-        // ============ ADD THIS LOGGING ============
-        // Log when distance1 would have been wrong with old calculation method
-        int oldStyleDistance1 = edgeLengthMm - result.distance0_mm;
-        if (Math.abs(result.distance1_mm - oldStyleDistance1) > 1000) {  // More than 1m difference
-            LOG.info("SPLIT FIX APPLIED: OSM way {} - New distance1: {}m, Old buggy calculation would have been: {}m (difference: {}m)",
-                    edge.getOSMID(),
-                    result.distance1_mm / 1000.0,
-                    oldStyleDistance1 / 1000.0,
-                    Math.abs(result.distance1_mm - oldStyleDistance1) / 1000.0);
-        }
-
-        // Specifically log the case we were debugging
-        if (edge.getOSMID() == 60404L) {
-            LOG.info("=== Split.findOnEdge for way 60404 ===");
-            LOG.info("  Split point: ({}, {})", result.fixedLat / 1.0e7, result.fixedLon / 1.0e7);
-            LOG.info("  distance0_mm: {}mm ({}m)", result.distance0_mm, result.distance0_mm/1000.0);
-            LOG.info("  distance1_mm: {}mm ({}m)", result.distance1_mm, result.distance1_mm/1000.0);
-            LOG.info("  Sum: {}mm, Edge stored length: {}mm",
-                    result.distance0_mm + result.distance1_mm, edgeLengthMm);
-            LOG.info("  Old buggy distance1 would have been: {}mm ({}m)",
-                    oldStyleDistance1, oldStyleDistance1/1000.0);
-        }
-        // ============ END LOGGING ============
 
         return result;
     }
