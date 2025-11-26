@@ -1303,7 +1303,36 @@ public class StreetLayer implements Serializable, Cloneable {
         // Retaining the original Edge cursor object inside findSplit is not necessary, one object creation is harmless.
         Edge edge = edgeStore.getCursor(split.edge);
 
+        // ============ ADD WORKAROUND - Check actual vertex proximity ============
+        // Even if Split reports distances > 5mm, the split point might actually be
+        // at an existing vertex due to bugs in Split's distance calculation.
+        // This check uses actual coordinates to detect that case.
+        VertexStore.Vertex vFrom = this.vertexStore.getCursor(edge.getFromVertex());
+        VertexStore.Vertex vTo = this.vertexStore.getCursor(edge.getToVertex());
+
+        double distToFrom = GeometryUtils.distance(
+                split.fixedLat / 1.0e7, split.fixedLon / 1.0e7,
+                vFrom.getLat(), vFrom.getLon()
+        );
+        double distToTo = GeometryUtils.distance(
+                split.fixedLat / 1.0e7, split.fixedLon / 1.0e7,
+                vTo.getLat(), vTo.getLon()
+        );
+
+        if (distToFrom < 0.001) {
+            LOG.info("splitEdge WORKAROUND: Split point within {}m of fromVertex {} (OSM way {}), returning existing vertex",
+                    distToFrom, edge.getFromVertex(), edge.getOSMID());
+            return edge.getFromVertex();
+        }
+        if (distToTo < 0.001) {
+            LOG.info("splitEdge WORKAROUND: Split point within {}m of toVertex {} (OSM way {}), returning existing vertex",
+                    distToTo, edge.getToVertex(), edge.getOSMID());
+            return edge.getToVertex();
+        }
+        // ============ END WORKAROUND ============
+
         // Check for cases where we don't need to create a new vertex (the edge is reached end-wise)
+        // This uses Split's reported distances, which may be inaccurate but is a secondary check
         if (split.distance0_mm < SNAP_RADIUS_MM || split.distance1_mm < SNAP_RADIUS_MM) {
             if (split.distance0_mm < split.distance1_mm) {
                 // Very close to the beginning of the edge.
