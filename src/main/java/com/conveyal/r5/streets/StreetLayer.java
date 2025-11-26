@@ -1214,6 +1214,35 @@ public class StreetLayer implements Serializable, Cloneable {
         // one additional object instantiation is harmless.
         Edge edge = edgeStore.getCursor(split.edge);
 
+
+        // ============ ADD THIS LOGGING SECTION ============
+        // Check if split point is essentially at an existing vertex
+        VertexStore.Vertex vFrom = this.vertexStore.getCursor(edge.getFromVertex());
+        VertexStore.Vertex vTo = this.vertexStore.getCursor(edge.getToVertex());
+
+        double distToFrom = GeometryUtils.distance(
+                split.fixedLat / 1.0e7, split.fixedLon / 1.0e7,
+                vFrom.getLat(), vFrom.getLon()
+        );
+        double distToTo = GeometryUtils.distance(
+                split.fixedLat / 1.0e7, split.fixedLon / 1.0e7,
+                vTo.getLat(), vTo.getLon()
+        );
+
+        // Count how many times we catch this edge case
+        if (distToFrom < 0.001) {
+            LOG.info("WORKAROUND ACTIVATED: Split point within {}m of fromVertex {} (OSM way {}), returning existing vertex",
+                    distToFrom, edge.getFromVertex(), edge.getOSMID());
+            return edge.getFromVertex();
+        }
+        if (distToTo < 0.001) {
+            LOG.info("WORKAROUND ACTIVATED: Split point within {}m of toVertex {} (OSM way {}), returning existing vertex",
+                    distToTo, edge.getToVertex(), edge.getOSMID());
+            return edge.getToVertex();
+        }
+        // ============ END LOGGING SECTION ============
+
+
         // Check for cases where we don't need to create a new vertex:
         // The linking site is very near an intersection, or the edge is reached end-wise.
         if (split.distance0_mm < SNAP_RADIUS_MM || split.distance1_mm < SNAP_RADIUS_MM) {
