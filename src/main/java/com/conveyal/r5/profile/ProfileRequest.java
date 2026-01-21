@@ -269,34 +269,24 @@ public class ProfileRequest implements Serializable, Cloneable {
      * @return the speed at which the given mode will traverse street edges, in floating point meters per second.
      */
     @JsonIgnore
-    public float getSpeedForMode (StreetMode streetMode) {
-        switch (streetMode) {
-            case WALK:
-                return walkSpeed;
-            case BICYCLE:
-                return bikeSpeed;
-            case CAR:
-                return carSpeed;
-            default:
-                throw new IllegalArgumentException("getSpeedForMode(): Invalid mode " + streetMode);
-        }
+    public final float getSpeedForMode(StreetMode streetMode) {
+        // Most common first for branch prediction
+        if (streetMode == StreetMode.WALK) return walkSpeed;
+        if (streetMode == StreetMode.CAR) return carSpeed;
+        if (streetMode == StreetMode.BICYCLE) return bikeSpeed;
+        throw new IllegalArgumentException("getSpeedForMode(): Invalid mode " + streetMode);
     }
 
     /**
      * @return the maximum travel time on a single leg for the given mode in integer seconds.
      */
     @JsonIgnore
-    public int getMaxTimeSeconds(StreetMode mode) {
-        switch (mode) {
-            case CAR:
-                return maxCarTime * SECONDS_PER_MINUTE;
-            case BICYCLE:
-                return maxBikeTime * SECONDS_PER_MINUTE;
-            case WALK:
-                return maxWalkTime * SECONDS_PER_MINUTE;
-            default:
-                throw new IllegalArgumentException("Invalid mode " + mode.toString());
-        }
+    public final int getMaxTimeSeconds(StreetMode mode) {
+        // Most common first
+        if (mode == StreetMode.WALK) return maxWalkTime * SECONDS_PER_MINUTE;
+        if (mode == StreetMode.CAR) return maxCarTime * SECONDS_PER_MINUTE;
+        if (mode == StreetMode.BICYCLE) return maxBikeTime * SECONDS_PER_MINUTE;
+        throw new IllegalArgumentException("Invalid mode " + mode.toString());
     }
 
     /**
@@ -341,18 +331,15 @@ public class ProfileRequest implements Serializable, Cloneable {
      * @return maximum time in integer seconds that may be spent on a leg using the given mode
      */
     @JsonIgnore
-    public int getMaxTimeSeconds(LegMode mode) {
-        switch (mode) {
-            case CAR:
-                return maxCarTime * 60;
-            case BICYCLE:
-                return maxBikeTime * 60;
-            case WALK:
-                return maxWalkTime * 60;
-            default:
-                LOG.error("Unknown mode: {}", mode);
-                return streetTime * 60;
-        }
+    public final int getMaxTimeSeconds(LegMode mode) {
+        // Most common first
+        if (mode == LegMode.WALK) return maxWalkTime * 60;
+        if (mode == LegMode.CAR) return maxCarTime * 60;
+        if (mode == LegMode.BICYCLE) return maxBikeTime * 60;
+
+        // Default for other modes
+        LOG.error("Unknown mode: {}", mode);
+        return streetTime * 60;
     }
 
     /**
@@ -360,15 +347,11 @@ public class ProfileRequest implements Serializable, Cloneable {
      *         defaults to zero for modes other than CAR or BICYCLE.
      */
     @JsonIgnore
-    public int getMinTimeSeconds(StreetMode mode) {
-        switch (mode) {
-            case CAR:
-                return minCarTime * 60;
-            case BICYCLE:
-                return minBikeTime * 60;
-            default:
-                return 0;
-        }
+    public final int getMinTimeSeconds(StreetMode mode) {
+        // Only CAR and BICYCLE have minimums
+        if (mode == StreetMode.CAR) return minCarTime * 60;
+        if (mode == StreetMode.BICYCLE) return minBikeTime * 60;
+        return 0;
     }
 
     /** Return the length of the time window in truncated integer minutes */

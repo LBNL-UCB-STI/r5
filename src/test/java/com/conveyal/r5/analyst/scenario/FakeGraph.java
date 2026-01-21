@@ -305,6 +305,22 @@ public class FakeGraph {
         return feed;
     }
 
+    /** create two transit lines, one of which is slightly slower */
+    public static GTFSFeed getSuboptimalLines () throws Exception {
+        GTFSFeed feed = getMultipleLines();
+        feed.feedId = "SUBOPTIMAL_LINES";
+
+        // find route 2 and slow it down
+        for (Trip t : feed.trips.values()) {
+            if ("route2".equals(t.route_id)) {
+                feed.stop_times.get(new Fun.Tuple2(t.trip_id, 2)).arrival_time += 60;
+                feed.stop_times.get(new Fun.Tuple2(t.trip_id, 2)).departure_time += 60;
+            }
+        }
+
+        return feed;
+    }
+
     /** Add a transit line with multiple patterns to a Columbus graph. Most trips serve stops s1, s2, s3 but some serve only s1, s3 */
     public static GTFSFeed getMultiplePatterns () throws Exception {
         // using conveyal GTFS lib to build GTFS so a lot of code does not have to be rewritten later
@@ -504,7 +520,10 @@ public class FakeGraph {
         MULTIPLE_PATTERNS,
 
         // same with multiple lines
-        MULTIPLE_LINES;
+        MULTIPLE_LINES,
+
+        // two lines, one slightly slower
+        SUBOPTIMAL_LINES;
 
         public GTFSFeed get () throws Exception {
             switch (this) {
@@ -517,6 +536,8 @@ public class FakeGraph {
                     return getMultiplePatterns();
                 case MULTIPLE_LINES:
                     return getMultipleLines();
+                case SUBOPTIMAL_LINES:
+                    return getSuboptimalLines();
             }
 
             throw new RuntimeException("can't happen");

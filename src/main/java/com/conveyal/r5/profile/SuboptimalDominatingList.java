@@ -1,9 +1,8 @@
 package com.conveyal.r5.profile;
 
-import java.util.Collection;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
+import com.conveyal.r5.api.util.LegMode;
+
+import java.util.*;
 
 /**
  * An implementation of DominatingList that conserves some sub-optimal states to obtain a wider variety of paths.
@@ -23,7 +22,22 @@ public class SuboptimalDominatingList implements DominatingList {
     /** the number of seconds a state can be worse without being dominated. */
     public int suboptimalSeconds;
 
-    private List<McRaptorSuboptimalPathProfileRouter.McRaptorState> list = new LinkedList<>();
+    private List<McRaptorSuboptimalPathProfileRouter.McRaptorState> states = new ArrayList<>(128);
+
+    @Override
+    public void reset() {
+        states.clear();  // Clears but keeps 128 capacity
+        bestTime = Integer.MAX_VALUE;  // Reset to initial value
+        // suboptimalSeconds stays the same (it's configuration)
+    }
+
+    private void swapAndRemove(int index) {
+        int lastIdx = states.size() - 1;
+        if (index != lastIdx) {
+            states.set(index, states.get(lastIdx));
+        }
+        states.remove(lastIdx);
+    }
 
     public boolean add (McRaptorSuboptimalPathProfileRouter.McRaptorState newState) {
         // apply strict dominance if there is a state at the previous round on the same previous pattern arriving at this
@@ -51,26 +65,49 @@ public class SuboptimalDominatingList implements DominatingList {
         // We only look back one pattern; the reason for this is that we want to avoid a lot of looping in a function
         // that gets called a lot, and it seems unlikely that there would be time to take two other patterns and still
         // slip into the window of suboptimality. I haven't tested it though to see its effect on response times.
-//        if (state.pattern != -1 && state.patterns.length > 1) {
-//            for (McRaptorSuboptimalPathProfileRouter.McRaptorState s : list) {
-//                if (s.round == state.round - 1 && s.pattern == state.patterns[s.round - 1] && s.time <= state.time) {
-//                    return false;
-//                }
-//            }
-//        }
 
-        for (Iterator<McRaptorSuboptimalPathProfileRouter.McRaptorState> it = list.iterator(); it.hasNext(); ) {
-            McRaptorSuboptimalPathProfileRouter.McRaptorState oldState = it.next();
+        final int newTime = newState.time;
+        final int newRound = newState.round;
+        final LegMode newAccessMode = newState.accessMode;
 
-            if (dominates(oldState, newState)) return false;
-            if (dominates(newState, oldState)) it.remove();
+        int i = states.size() - 1;
+        while (i >= 0) {
+            McRaptorSuboptimalPathProfileRouter.McRaptorState oldState = states.get(i);
+
+            // Inline dominance check to avoid function call overhead
+            boolean sameAccessMode = oldState.accessMode == newAccessMode;
+
+            // Check if old dominates new
+            if (sameAccessMode && oldState.round < newRound && oldState.time <= newTime) {
+                return false; // Dominated
+            }
+
+            int threshold = sameAccessMode ? suboptimalSeconds : suboptimalSeconds * 5;
+            if (oldState.time + threshold < newTime) {
+                return false; // Dominated
+            }
+
+            // Check if new dominates old
+            boolean removed = false;
+            if (sameAccessMode && newRound < oldState.round && newTime <= oldState.time) {
+                swapAndRemove(i);// Safe to remove since looping backwards
+                removed = true;
+            } else if (newTime + threshold < oldState.time) {
+                swapAndRemove(i);
+                removed = true;
+            }
+
+            // Only decrement if we didn't remove (if we removed, check the swapped element)
+            if (!removed || i >= states.size()) {
+                i--;
+            }
         }
 
         // Update the best time at this location to reflect the new state.
-        if (newState.time < bestTime) bestTime = newState.time;
+        if (newTime < bestTime) bestTime = newTime;
 
         // The new state is non-dominated. Keep it.
-        list.add(newState);
+        states.add(newState);
 
         return true;
     }
@@ -103,6 +140,6 @@ public class SuboptimalDominatingList implements DominatingList {
         // I've observed in the past that pruning on add slows the algorithm down due to all of the looping.
         // I also tried pruning once per round, but that also slows the algorithm down (perhaps because it's doing
         // so many pairwise comparisons).
-        return list;
+        return states;
     }
 }

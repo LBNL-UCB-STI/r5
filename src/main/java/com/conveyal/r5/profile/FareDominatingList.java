@@ -22,6 +22,12 @@ public class FareDominatingList implements DominatingList {
         this.maxClockTime = maxClockTime;
     }
 
+    @Override
+    public void reset() {
+        states.clear();  // Clears the list
+        // maxFare, maxClockTime, fareCalculator are final config - don't reset
+    }
+
     /**
      * Return true if there is no way that a route with dominator as a prefix can yield a route that is slower or more
      * expensive than the same route with dominatee as a prefix.

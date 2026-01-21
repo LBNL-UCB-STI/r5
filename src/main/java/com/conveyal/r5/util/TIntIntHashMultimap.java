@@ -40,4 +40,9 @@ public class TIntIntHashMultimap implements TIntIntMultimap, Serializable {
     public TIntCollection removeAll(int key) {
         return wrapped.containsKey(key) ? wrapped.remove(key) : EmptyTIntCollection.get();
     }
+
+    @Override
+    public int size() {
+        return wrapped.size();
+    }
 }

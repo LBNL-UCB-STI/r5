@@ -22,10 +22,10 @@ import static com.conveyal.r5.transit.TransitLayer.TRANSFER_DISTANCE_LIMIT_METER
 public class ProfileResponse {
 
     private static final Logger LOG = LoggerFactory.getLogger(ProfileResponse.class);
-    public List<ProfileOption> options = new ArrayList<>();
-    private Map<Integer, TripPattern> patterns = new HashMap<>();
+    public List<ProfileOption> options = new ArrayList<>(50);
+    private Map<Integer, TripPattern> patterns = new HashMap<>(100);
     //This is used to find which transfers are used in which Profileoption when calculating street transfers
-    private Multimap<Transfer, ProfileOption> transferToOption = HashMultimap.create();
+    private Multimap<Transfer, ProfileOption> transferToOption = HashMultimap.create(50, 3);
 
     @Override public String toString() {
         return "ProfileResponse{" +
@@ -33,7 +33,7 @@ public class ProfileResponse {
             '}';
     }
     //This connect which transits are in which profileOption
-    private Map<HashPath, ProfileOption> transitToOption = new HashMap<>();
+    private Map<HashPath, ProfileOption> transitToOption = new HashMap<>(100);
 
     public List<ProfileOption> getOptions() {
         return options;
@@ -44,10 +44,39 @@ public class ProfileResponse {
         return new ArrayList<>(patterns.values());
     }
 
+    public Multimap<Transfer, ProfileOption> getTransferToOption() {
+        return transferToOption;
+    }
+
     public void addOption(ProfileOption option) {
         //Adds only non-empty profile options to response
         if (option.access != null && !option.access.isEmpty()) {
             options.add(option);
+        }
+    }
+
+    // At class level:
+    private Map<StreetSegmentKey, StreetSegment> streetSegmentCache = new HashMap<>(500);
+
+    private static class StreetSegmentKey {
+        final LegMode mode;
+        final int stopVertex;
+
+        StreetSegmentKey(LegMode mode, int stopVertex) {
+            this.mode = mode;
+            this.stopVertex = stopVertex;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (!(o instanceof StreetSegmentKey)) return false;
+            StreetSegmentKey k = (StreetSegmentKey) o;
+            return mode == k.mode && stopVertex == k.stopVertex;
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * mode.hashCode() + stopVertex;
         }
     }
 
@@ -74,98 +103,124 @@ public class ProfileResponse {
                                TransportNetwork transportNetwork, ZonedDateTime fromTimeDateZD) {
 
         HashPath hashPath = new HashPath(currentTransitPath);
-        ProfileOption profileOption = transitToOption.getOrDefault(hashPath, new ProfileOption());
-
-
-        if (profileOption.isEmpty()) {
-            LOG.debug("Creating new profile option");
+        ProfileOption profileOption = transitToOption.get(hashPath);
+        boolean isNewOption = (profileOption == null);
+        if (isNewOption) {
+            profileOption = new ProfileOption();
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Creating new profile option");
+            }
             options.add(profileOption);
+            transitToOption.put(hashPath, profileOption);
         }
 
         int startStopIndex = currentTransitPath.boardStops[0];
         int endStopIndex = currentTransitPath.alightStops[currentTransitPath.length-1];
         int startVertexStopIndex = transportNetwork.transitLayer.streetVertexForStop.get(startStopIndex);
         int endVertexStopIndex = transportNetwork.transitLayer.streetVertexForStop.get(endStopIndex);
-        //LOG.info("Filling response access paths:");
-        //TODO: update this so that each stopIndex and mode pair is changed to streetpath only once
+
+        // ACCESS
         LegMode accessMode = currentTransitPath.accessMode;
         if (accessMode != null) {
             int accessPathIndex = profileOption.getAccessIndex(accessMode, startVertexStopIndex);
             if (accessPathIndex < 0) {
-                //Here accessRouter needs to have this access mode since stopModeAccessMap is filled from accessRouter
-                StreetRouter streetRouter = accessRouter.get(accessMode);
-                //FIXME: Must we really update this on every streetrouter?
-                streetRouter.profileRequest.reverseSearch = false;
-                StreetRouter.State state = streetRouter.getStateAtVertex(startVertexStopIndex);
-                if (state != null) {
-                    StreetPath streetPath;
-                    if ((accessMode == LegMode.CAR_PARK || accessMode == LegMode.BICYCLE_RENT) && streetRouter.previousRouter != null) {
-                        streetPath = new StreetPath(state, streetRouter, accessMode,
-                            transportNetwork);
-                    } else {
-                        streetPath = new StreetPath(state, transportNetwork, false);
+                // Check cache first
+                StreetSegmentKey cacheKey = new StreetSegmentKey(accessMode, startVertexStopIndex);
+                StreetSegment streetSegment = streetSegmentCache.get(cacheKey);
+
+                if (streetSegment == null) {
+                    // Not cached - create it
+                    StreetRouter streetRouter = accessRouter.get(accessMode);
+                    if (streetRouter != null) {
+                        streetRouter.profileRequest.reverseSearch = false;
+                        StreetRouter.State state = streetRouter.getStateAtVertex(startVertexStopIndex);
+
+                        if (state != null) {
+                            StreetPath streetPath;
+                            if ((accessMode == LegMode.CAR_PARK || accessMode == LegMode.BICYCLE_RENT) &&
+                                    streetRouter.previousRouter != null) {
+                                streetPath = new StreetPath(state, streetRouter, accessMode, transportNetwork);
+                            } else {
+                                streetPath = new StreetPath(state, transportNetwork, false);
+                            }
+                            streetSegment = new StreetSegment(streetPath, accessMode, transportNetwork.streetLayer);
+                            streetSegmentCache.put(cacheKey, streetSegment);
+                        } else if (LOG.isWarnEnabled()) {
+                            LOG.warn("Access: Last state not found for mode:{} stop:{}({})",
+                                    accessMode, startVertexStopIndex, startStopIndex);
+                        }
                     }
-                    StreetSegment streetSegment = new StreetSegment(streetPath, accessMode, transportNetwork.streetLayer);
+                }
+
+                if (streetSegment != null) {
                     profileOption.addAccess(streetSegment, accessMode, startVertexStopIndex);
-                    //This should never happen since stopModeAccessMap is filled from reached stops in accessRouter
-                } else {
-                    LOG.warn("Access: Last state not found for mode:{} stop:{}({})", accessMode, startVertexStopIndex, startStopIndex);
                 }
             }
-        } else {
+        } else if (LOG.isWarnEnabled()) {
             LOG.warn("Mode is not in stopModeAccessMap for start stop:{}({})", startVertexStopIndex, startStopIndex);
         }
 
-        //LOG.info("Filling response EGRESS paths:");
+        // EGRESS
         LegMode egressMode = currentTransitPath.egressMode;
         if (egressMode != null) {
             int egressPathIndex = profileOption.getEgressIndex(egressMode, endVertexStopIndex);
             if (egressPathIndex < 0) {
-                //Here egressRouter needs to have this egress mode since stopModeEgressMap is filled from egressRouter
-                StreetRouter streetRouter = egressRouter.get(egressMode);
-                //FIXME: Must we really update this on every streetrouter?
-                streetRouter.profileRequest.reverseSearch = true;
-                StreetRouter.State state = streetRouter.getStateAtVertex(endVertexStopIndex);
-                if (state != null) {
-                    StreetPath streetPath = new StreetPath(state, transportNetwork, true);
-                    StreetSegment streetSegment = new StreetSegment(streetPath, egressMode, transportNetwork.streetLayer);
+                // Check cache first
+                StreetSegmentKey cacheKey = new StreetSegmentKey(egressMode, endVertexStopIndex);
+                StreetSegment streetSegment = streetSegmentCache.get(cacheKey);
+
+                if (streetSegment == null) {
+                    // Not cached - create it
+                    StreetRouter streetRouter = egressRouter.get(egressMode);
+                    if (streetRouter != null) {
+                        streetRouter.profileRequest.reverseSearch = true;
+                        StreetRouter.State state = streetRouter.getStateAtVertex(endVertexStopIndex);
+
+                        if (state != null) {
+                            StreetPath streetPath = new StreetPath(state, transportNetwork, true);
+                            streetSegment = new StreetSegment(streetPath, egressMode, transportNetwork.streetLayer);
+                            streetSegmentCache.put(cacheKey, streetSegment);
+                        } else if (LOG.isWarnEnabled()) {
+                            LOG.warn("EGRESS: Last state not found for mode:{} stop:{}({})",
+                                    egressMode, endVertexStopIndex, endStopIndex);
+                        }
+                    }
+                }
+
+                if (streetSegment != null) {
                     profileOption.addEgress(streetSegment, egressMode, endVertexStopIndex);
-                    //This should never happen since stopModeEgressMap is filled from reached stops in egressRouter
-                } else {
-                    LOG.warn("EGRESS: Last state not found for mode:{} stop:{}({})", accessMode, endVertexStopIndex, endStopIndex);
                 }
             }
-        } else {
+        } else if (LOG.isWarnEnabled()) {
             LOG.warn("Mode is not in stopModeEgressMap for END stop:{}({})", endVertexStopIndex, endStopIndex);
         }
+
+        // TRANSIT SEGMENTS
         List<TransitJourneyID> transitJourneyIDs = new ArrayList<>(currentTransitPath.patterns.length);
         for (int i = 0; i < currentTransitPath.patterns.length; i++) {
-                profileOption.addTransit(transportNetwork.transitLayer,
+            profileOption.addTransit(transportNetwork.transitLayer,
                     currentTransitPath, i, fromTimeDateZD, transitJourneyIDs);
-            if (i>0) {
-                //If there is a transfer between same stops we don't need to walk since we are already there
+
+            if (i > 0) {
+                // If there is a transfer between same stops we don't need to walk since we are already there
                 if (currentTransitPath.boardStops[i] != currentTransitPath.alightStops[i-1]) {
-                    //Adds transfer and transitIndex where it is used (Used when searching for street paths between transit stops)
+                    // Adds transfer and transitIndex where it is used (Used when searching for street paths between transit stops)
                     transferToOption.put(new Transfer(currentTransitPath.alightStops[i - 1],
-                        currentTransitPath.boardStops[i], i - 1), profileOption);
+                            currentTransitPath.boardStops[i], i - 1), profileOption);
                 }
             }
 
-            patterns.putIfAbsent(currentTransitPath.patterns[i], new TripPattern(transportNetwork.transitLayer,currentTransitPath.patterns[i]));
+            patterns.putIfAbsent(currentTransitPath.patterns[i],
+                    new TripPattern(transportNetwork.transitLayer, currentTransitPath.patterns[i]));
         }
 
-
-
         profileOption.addItineraries(transitJourneyIDs, transportNetwork.getTimeZone());
-
         profileOption.summary = profileOption.generateSummary();
 
         //TODO: this calculates fares last time currentTransitPath is added to this ProfileOption
         //What happens if we use Agency A in first transfer and B in second but at different time
         //Agency A and agency C at next transfer if stops are the same?
         profileOption.fares.addAll(DCFareCalculator.calculateFares(currentTransitPath, transportNetwork));
-
-        transitToOption.putIfAbsent(hashPath, profileOption);
     }
 
     /**
@@ -203,7 +258,7 @@ public class ProfileResponse {
                     for (ProfileOption profileOption: transferToOption.get(transfer)) {
                         profileOption.addMiddle(streetSegment, transfer);
                     }
-                } else {
+                } else if (LOG.isWarnEnabled()) {
                     LOG.warn("Street transfer: {} not found in streetlayer", transfer);
                 }
             }

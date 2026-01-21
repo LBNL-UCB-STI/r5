@@ -11,6 +11,8 @@ import com.conveyal.r5.trove.TLongAugmentedList;
 import com.conveyal.r5.util.P2;
 import com.conveyal.r5.util.TIntIntHashMultimap;
 import com.conveyal.r5.util.TIntIntMultimap;
+import gnu.trove.TIntCollection;
+import gnu.trove.iterator.TIntIterator;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.LineString;
@@ -291,6 +293,12 @@ public class EdgeStore implements Serializable {
 
     }
 
+    public boolean hasTurnRestrictions() {
+        // Check if either map has entries
+        // Assuming TIntIntHashMultimap has a size() or isEmpty() method
+        return turnRestrictions.size() > 0 || turnRestrictionsReverse.size() > 0;
+    }
+
     /**
      * This creates the bare topological edge pair with a length.
      * Flags, detailed geometry, etc. must be set subsequently using an edge cursor.
@@ -351,33 +359,25 @@ public class EdgeStore implements Serializable {
      * @param s1 new state
      */
     void startTurnRestriction(StreetMode streetMode, boolean reverseSearch,
-        StreetRouter.State s1) {
-        if (reverseSearch) {
-            // add turn restrictions that start on this edge
-            // Turn restrictions only apply to cars for now. This is also coded in canTurnFrom, so change it both places
-            // if/when it gets changed.
-            if (streetMode == StreetMode.CAR && turnRestrictionsReverse.containsKey(s1.backEdge)) {
-                if (s1.turnRestrictions == null)
-                    s1.turnRestrictions = new TIntIntHashMap();
-                turnRestrictionsReverse.get(s1.backEdge).forEach(r -> {
-                    s1.turnRestrictions.put(r, 1); // we have traversed one edge
-                    return true; // continue iteration
-                });
-                //LOG.info("RRTADD: S1:{}|{}", s1.backEdge, s1.turnRestrictions);
-            }
-        } else {
-            // add turn restrictions that start on this edge
-            // Turn restrictions only apply to cars for now. This is also coded in canTurnFrom, so change it both places
-            // if/when it gets changed.
-            if (streetMode == StreetMode.CAR && turnRestrictions.containsKey(s1.backEdge)) {
-                if (s1.turnRestrictions == null)
-                    s1.turnRestrictions = new TIntIntHashMap();
-                turnRestrictions.get(s1.backEdge).forEach(r -> {
-                    s1.turnRestrictions.put(r, 1); // we have traversed one edge
-                    return true; // continue iteration
-                });
-                //LOG.info("TADD: S1:{}|{}", s1.backEdge, s1.turnRestrictions);
-            }
+                              StreetRouter.State s1) {
+
+        // FAST PATH: Exit immediately if no turn restrictions exist anywhere
+        if (streetMode != StreetMode.CAR || !hasTurnRestrictions()) {
+            return;
+        }
+
+        TIntIntMultimap restrictions = reverseSearch ? turnRestrictionsReverse : turnRestrictions;
+
+        TIntCollection values = restrictions.get(s1.backEdge);
+        if (values == null || values.isEmpty()) return;
+
+        if (s1.turnRestrictions == null) {
+            s1.turnRestrictions = new TIntIntHashMap();
+        }
+
+        TIntIterator it = values.iterator();
+        while (it.hasNext()) {
+            s1.turnRestrictions.put(it.next(), 1);
         }
     }
 
@@ -566,6 +566,22 @@ public class EdgeStore implements Serializable {
 
         public StreetRouter.State traverse (StreetRouter.State s0, StreetMode streetMode, ProfileRequest req,
                                             TurnCostCalculator turnCostCalculator, TravelTimeCalculator travelTimeCalculator, TravelCostCalculator travelCostCalculator) {
+            int vertex;
+            if (req.reverseSearch) {
+                vertex = getFromVertex();
+            } else {
+                vertex = getToVertex();
+            }
+            StreetRouter.State s1 = new StreetRouter.State(vertex, edgeIndex, s0);
+            if (traverseInto(s1, s0, streetMode, req, turnCostCalculator, travelTimeCalculator, travelCostCalculator)) {
+                return s1;
+            } else {
+                return null;
+            }
+        }
+
+        public boolean traverseInto (StreetRouter.State s1, StreetRouter.State s0, StreetMode streetMode, ProfileRequest req,
+            TurnCostCalculator turnCostCalculator, TravelTimeCalculator travelTimeCalculator, TravelCostCalculator travelCostCalculator) {
 
             // The vertex we'll be at after the traversal
             int vertex;
@@ -575,11 +591,19 @@ public class EdgeStore implements Serializable {
                 vertex = getToVertex();
             }
 
-            StreetRouter.State s1 = new StreetRouter.State(vertex, edgeIndex, s0);
-            float time = travelTimeCalculator.getTravelTimeSeconds(this, s0.durationSeconds, streetMode, req);
+            s1.setFrom(s0, vertex, edgeIndex);
+
+            // The ProfileRequest.fromTime contains when the search started
+            float time = travelTimeCalculator.getTravelTimeSeconds(
+                    this,
+                    s0.durationSeconds,
+                    streetMode,
+                    req,
+                    req.fromTime
+            );
             float weight = 0;
 
-            if (!canTurnFrom(s0, s1, req.reverseSearch)) return null;
+            if (!canTurnFrom(s0, s1, req.reverseSearch)) return false;
 
             // clear out turn restrictions if they're empty
             if (s1.turnRestrictions != null && s1.turnRestrictions.isEmpty()) s1.turnRestrictions = null;
@@ -593,7 +617,7 @@ public class EdgeStore implements Serializable {
             //Since backEdges are set from first part of multipart P+R search
             if ((s0.backEdge >=0 ) && (s0.backState != null) && getFlag(EdgeFlag.LINK) && getCursor(s0.backEdge).getFlag(EdgeFlag.LINK))
                 // two link edges in a row, in other words a shortcut. Disallow this.
-                return null;
+                return false;
 
             //Currently weigh is basically the same as weight. It differs only on stairs and when walking.
 
@@ -602,7 +626,7 @@ public class EdgeStore implements Serializable {
                 weight = time;
                 //If wheelchair path is requested and this edge doesn't allow wheelchairs we need to find another edge
                 if (req.wheelchair && !getFlag(EdgeFlag.ALLOWS_WHEELCHAIR)) {
-                    return null;
+                    return false;
                 }
                 //elevation which changes weight
             } else if (streetMode == StreetMode.BICYCLE) {
@@ -627,7 +651,7 @@ public class EdgeStore implements Serializable {
                 // TODO bike walking costs when switching bikes
 
                 // only walk if you're allowed to
-                if (walking && !getFlag(EdgeFlag.ALLOWS_PEDESTRIAN)) return null;
+                if (walking && !getFlag(EdgeFlag.ALLOWS_PEDESTRIAN)) return false;
 
                 if (walking) {
                     //TODO: set bike walking in state
@@ -641,7 +665,7 @@ public class EdgeStore implements Serializable {
             } else if (streetMode == StreetMode.CAR && getFlag(EdgeFlag.ALLOWS_CAR)) {
                 weight = travelCostCalculator.getGeneralizedTravelCost(this, s0.durationSeconds, time);
             } else {
-                return null; // this mode cannot traverse this edge
+                return false; // this mode cannot traverse this edge
             }
 
             if(getFlag(EdgeFlag.STAIRS)) {
@@ -672,7 +696,7 @@ public class EdgeStore implements Serializable {
             if (s1.durationSeconds == s0.durationSeconds) s1.incrementTimeInSeconds(1);
             if (s1.distance == s0.distance) s1.distance += 1;
 
-            return s1;
+            return true;
         }
 
         /** Can we turn onto this edge from this state? Also copies still-applicable restrictions forward. */
@@ -699,7 +723,7 @@ public class EdgeStore implements Serializable {
                         //In reverse search order of from/to and viaEdges is changed since we search from toEdge to fromEdge
                         toEdge = restriction.fromEdge;
                         if (viaEdges.length > 1) {
-                            TurnRestriction.reverse(viaEdges);
+                            viaEdges = TurnRestriction.reverse(viaEdges);  // Now safe - creates copy
                         }
                     }
 

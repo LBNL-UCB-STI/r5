@@ -20,6 +20,16 @@ public class GeometryUtils {
     public static final double RADIUS_OF_EARTH_M = 6_367_450;
 
     /**
+     * Thread-local reusable objects to avoid allocation in hot geometric calculation paths.
+     * LineSegment and Coordinate are designed to be mutable (per JTS documentation).
+     */
+    private static final ThreadLocal<LineSegment> REUSABLE_SEGMENT =
+            ThreadLocal.withInitial(LineSegment::new);
+
+    private static final ThreadLocal<Coordinate> REUSABLE_COORDINATE =
+            ThreadLocal.withInitial(Coordinate::new);
+
+    /**
      * Haversine formula for distance on the sphere. We used to have a fastDistance function that would estimate this
      * quickly, but I'm not convinced we actually need it.
      * @return distance in meters
@@ -51,8 +61,21 @@ public class GeometryUtils {
         fixedLon0 = (int) (fixedLon0 / cosLat);
         fixedLon1 = (int) (fixedLon1 / cosLat);
         fixedLon  = (int) (fixedLon / cosLat);
-        LineSegment seg = new LineSegment(fixedLon0, fixedLat0, fixedLon1, fixedLat1);
-        return seg.segmentFraction(new Coordinate(fixedLon, fixedLat));
+
+        // Reuse thread-local objects instead of allocating - ZERO allocation!
+        LineSegment seg = REUSABLE_SEGMENT.get();
+        Coordinate coord = REUSABLE_COORDINATE.get();
+
+        // Mutate the reusable objects
+        seg.p0.x = fixedLon0;
+        seg.p0.y = fixedLat0;
+        seg.p1.x = fixedLon1;
+        seg.p1.y = fixedLat1;
+
+        coord.x = fixedLon;
+        coord.y = fixedLat;
+
+        return seg.segmentFraction(coord);
     }
 
     /**

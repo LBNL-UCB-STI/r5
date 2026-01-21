@@ -36,12 +36,12 @@ public class TurnRestriction implements Serializable {
      * TODO: make this on the fly without copying arrays
      * @param viaEdges
      */
-    public static void reverse(int[] viaEdges) {
-        for (int i = 0; i < viaEdges.length / 2; i++) {
-            int temp = viaEdges[i];
-            viaEdges[i] = viaEdges[viaEdges.length - i - 1];
-            viaEdges[viaEdges.length - i - 1] = temp;
+    public static int[] reverse(int[] viaEdges) {
+        int[] reversed = new int[viaEdges.length];
+        for (int i = 0; i < viaEdges.length; i++) {
+            reversed[i] = viaEdges[viaEdges.length - 1 - i];
         }
+        return reversed;
     }
 
     // via information is implied by the edges this turn restriction is attached to
