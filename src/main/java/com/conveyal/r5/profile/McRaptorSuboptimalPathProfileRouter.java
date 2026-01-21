@@ -246,12 +246,12 @@ public class McRaptorSuboptimalPathProfileRouter {
         }
 
 
-        ArrayList<Integer> departureTimes = new ArrayList<>();
+        ArrayList<Integer> departureTimes = generateDepartureTimesToSample(request);
 
         // Only enforce exact count for Monte Carlo mode
         // In deterministic mode (monteCarloDraws == 0), use whatever was generated
         if (request.monteCarloDraws > 0) {
-            while(departureTimes.size() != request.monteCarloDraws){
+            while (departureTimes.size() != request.monteCarloDraws) {
                 departureTimes = generateDepartureTimesToSample(request);
             }
         }
@@ -260,7 +260,9 @@ public class McRaptorSuboptimalPathProfileRouter {
             departureTime = departureTimes.get(n);
 
             // we're not using range-raptor so it's safe to change the schedule on each search
-            offsets.randomize();
+            if (request.monteCarloDraws > 0) {
+                offsets.randomize();
+            }
 
             bestStates.clear();
             touchedPatterns.clear();
