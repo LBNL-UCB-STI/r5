@@ -245,6 +245,10 @@ public class McRaptorSuboptimalPathProfileRouter {
                     "this error?");
         }
 
+        if (request.monteCarloDraws != 0) {
+            LOG.warn("BEAM fork requires monteCarloDraws=0, got {}", request.monteCarloDraws);
+            throw new IllegalArgumentException("BEAM fork requires monteCarloDraws=0");
+        }
 
         ArrayList<Integer> departureTimes = generateDepartureTimesToSample(request);
 
@@ -678,36 +682,9 @@ public class McRaptorSuboptimalPathProfileRouter {
     }
 
     private ArrayList<Integer> generateDepartureTimesToSample(ProfileRequest request) {
-        // See Owen and Jiang 2016 (unfortunately no longer available online), add between f / 2 and
-        // f + f / 2, where f is the mean step.
-        ArrayList<Integer> departureTimes = new ArrayList<>();
-
-        // When monteCarloDraws is 0, use deterministic sampling that matches
-        // how BEAM expands frequency routes into scheduled vehicle trips
-        if (request.monteCarloDraws == 0) {
-            // Deterministic mode: sample at regular intervals
-            // Use a reasonable default sampling rate (e.g., every 60 seconds)
-            int samplingInterval = 60; // seconds
-
-            for (int departureTime = request.fromTime;
-                 departureTime < request.toTime;
-                 departureTime += samplingInterval) {
-                departureTimes.add(departureTime);
-            }
-
-            return departureTimes;
-        }
-
-        // Original Monte Carlo behavior for non-zero draws
-        int randomWalkStepMean = (request.toTime - request.fromTime) / request.monteCarloDraws;
-        int randomWalkStepWidthOneSided = randomWalkStepMean / 2;
-
-        for (int departureTime = request.fromTime + mersenneTwister.nextInt(randomWalkStepMean);
-             departureTime < request.toTime;
-             departureTime += mersenneTwister.nextInt(randomWalkStepMean) + randomWalkStepWidthOneSided) {
-            departureTimes.add(departureTime);
-        }
-
+        ArrayList<Integer> departureTimes = new ArrayList<>(1);
+        // BEAM deterministic mode: evaluate a single departure time for consistency with scheduled vehicles.
+        departureTimes.add(request.fromTime);
         return departureTimes;
     }
 
