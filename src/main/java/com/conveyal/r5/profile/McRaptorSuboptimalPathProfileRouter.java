@@ -386,16 +386,27 @@ public class McRaptorSuboptimalPathProfileRouter {
 
         //  Manual iteration - no lambda allocation
         for (McRaptorState s : states) {
-            PathWithTimes pwt = new PathWithTimes(
-                    s, network, request,
-                    accessTimes.get(s.accessMode),
-                    egressTimes.get(s.egressMode)
-            );
+            TIntIntMap access = accessTimes.get(s.accessMode);
+            TIntIntMap egress = egressTimes.get(s.egressMode);
+            if (access == null || egress == null) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("Skipping path: missing access/egress times (accessMode={}, egressMode={})",
+                            s.accessMode, s.egressMode);
+                }
+                continue;
+            }
+            try {
+                PathWithTimes pwt = new PathWithTimes(s, network, request, access, egress);
 
-            //  Single lookup instead of containsKey + get
-            PathWithTimes existing = paths.get(pwt);
-            if (existing == null || existing.stats.avg > pwt.stats.avg) {
-                paths.put(pwt, pwt);
+                //  Single lookup instead of containsKey + get
+                PathWithTimes existing = paths.get(pwt);
+                if (existing == null || existing.stats.avg > pwt.stats.avg) {
+                    paths.put(pwt, pwt);
+                }
+            } catch (IllegalArgumentException ex) {
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("Skipping path due to missing access/egress stop: {}", ex.getMessage());
+                }
             }
         }
 

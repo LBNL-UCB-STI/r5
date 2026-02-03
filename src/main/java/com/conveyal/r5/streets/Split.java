@@ -273,12 +273,81 @@ public class Split {
         result.vertex0 = best.vertex0;
         result.vertex1 = best.vertex1;
 
+        // ============================================================================
+        // FIX: Calculate both distances using consistent methodology
+        // ============================================================================
+        // The original code mixed two different distance calculation methods:
+        // - distance0_mm used simplified linear approximation from the loop above
+        // - distance1_mm was calculated as (edge.getLengthMm() - distance0_mm)
+        //   where edge.getLengthMm() used Haversine/spherical distance
+        //
+        // This caused bugs when the split point projected exactly onto a vertex,
+        // because the two methods gave different total lengths, resulting in
+        // distance1_mm being non-zero even when the split point was at the end vertex.
+        //
+        // Solution: Calculate BOTH distances using the same method (GeometryUtils.distance)
+        // based on actual coordinates, ensuring consistency.
+        // ============================================================================
+
+        // Get actual vertex coordinates for consistent distance calculation
+        VertexStore.Vertex vFrom = edge.getEdgeStore().vertexStore.getCursor(result.vertex0);
+        VertexStore.Vertex vTo = edge.getEdgeStore().vertexStore.getCursor(result.vertex1);
+
+        // Calculate distance from start vertex to split point using GeometryUtils
+        double distanceFromStartToSplit = GeometryUtils.distance(
+                vFrom.getLat(), vFrom.getLon(),
+                result.fixedLat / 1.0e7, result.fixedLon / 1.0e7
+        );
+
+        // Calculate distance from split point to end vertex using GeometryUtils
+        double distanceFromSplitToEnd = GeometryUtils.distance(
+                result.fixedLat / 1.0e7, result.fixedLon / 1.0e7,
+                vTo.getLat(), vTo.getLon()
+        );
+
+        // Convert to millimeters
+        result.distance0_mm = (int)(distanceFromStartToSplit * 1000.0);
+        result.distance1_mm = (int)(distanceFromSplitToEnd * 1000.0);
+
+        // The edge's stored length was calculated using Haversine distance in StreetLayer.makeEdge()
+        // Our GeometryUtils.distance should give similar results, but there may be small differences
+        // due to rounding or slightly different calculation methods. Ensure the split distances
+        // don't exceed the edge's stored length to maintain network consistency.
         int edgeLengthMm = edge.getLengthMm();
-        if (result.distance0_mm > edgeLengthMm) {
-            result.distance0_mm = edgeLengthMm;
-            result.distance1_mm = 0;
-        } else {
+        int totalSplitLength = result.distance0_mm + result.distance1_mm;
+
+        if (totalSplitLength > edgeLengthMm) {
+            // The sum of split distances exceeds the stored edge length.
+            // This can happen due to rounding or calculation method differences.
+            // Scale the distances proportionally to fit within the edge length.
+            double scale = (double)edgeLengthMm / totalSplitLength;
+            result.distance0_mm = (int)(result.distance0_mm * scale);
             result.distance1_mm = edgeLengthMm - result.distance0_mm;
+
+            LOG.debug("Split distances ({} + {} = {}mm) exceed edge length ({}mm), scaled to fit.",
+                    (int)(distanceFromStartToSplit * 1000.0),
+                    (int)(distanceFromSplitToEnd * 1000.0),
+                    totalSplitLength,
+                    edgeLengthMm);
+        }
+
+        // Additional safety check: ensure non-negative distances
+        if (result.distance0_mm < 0) {
+            LOG.debug("Calculated distance0_mm was negative ({}), setting to 0", result.distance0_mm);
+            result.distance0_mm = 0;
+        }
+        if (result.distance1_mm < 0) {
+            LOG.debug("Calculated distance1_mm was negative ({}), setting to 0", result.distance1_mm);
+            result.distance1_mm = 0;
+        }
+
+        // Edge case: if split point is at start vertex
+        if (result.distance0_mm == 0 && totalSplitLength <= edgeLengthMm) {
+            result.distance1_mm = edgeLengthMm;
+        }
+        // Edge case: if split point is at end vertex
+        if (result.distance1_mm == 0 && totalSplitLength <= edgeLengthMm) {
+            result.distance0_mm = edgeLengthMm;
         }
 
         return result;
