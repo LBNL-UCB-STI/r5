@@ -831,9 +831,10 @@ public class StreetRouter {
             // If the search has reached the destination, the state coming off the queue is the best way to get there.
             if (toVertex > 0 && toVertex == s0.vertex) break;
 
-            // End the search if the state coming off the queue has exceeded the best-known cost to reach the destination.
-            // TODO how important is this? How can this even happen? In a street search, is target pruning even effective?
-            if (s0Cost > bestValueAtDestination) break;
+            // End the search only when the best possible total cost (f = g + h) exceeds the best-known destination cost.
+            // The queue is ordered by f, not g. Using g alone here can terminate the search too early and miss cheaper
+            // paths that currently have low g but high h (e.g., longer detours that avoid tolls).
+            if (((long) s0Cost + s0.heuristic) > bestValueAtDestination) break;
 
             // Hit RoutingVistor callbacks to monitor search progress.
             if (routingVisitor != null) {
