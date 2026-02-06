@@ -531,17 +531,34 @@ public class StreetRouter {
         EdgeStore.Edge  edge = streetLayer.edgeStore.getCursor(split.edge);
         int offStreetTime = split.distanceToEdge_mm / OFF_STREET_SPEED_MILLIMETERS_PER_SECOND;
 
-        // Uses weight based on distance from end vertices, and speed on edge which depends on transport mode
+        // Uses weight based on distance from end vertices, and speed on edge which depends on transport mode.
+        // For car, this must use generalized cost (time + tolls/fares) rather than pure time.
         float speedMetersPerSecond = edge.calculateSpeed(profileRequest, streetMode);
-        startState1.weight = (int) ((split.distance1_mm / 1000) / speedMetersPerSecond) + offStreetTime;
-        startState1.durationSeconds = startState1.weight;
+        float traversalTimeSeconds1 = (float) ((split.distance1_mm / 1000d) / speedMetersPerSecond);
+        int traversalDurationSeconds1 = (int) traversalTimeSeconds1;
+        int traversalWeight1 = traversalDurationSeconds1;
+        if (streetMode == StreetMode.CAR) {
+            traversalWeight1 = (int) Math.ceil(
+                    travelCostCalculator.getGeneralizedTravelCost(edge, offStreetTime, traversalTimeSeconds1)
+            );
+        }
+        startState1.weight = traversalWeight1 + offStreetTime;
+        startState1.durationSeconds = traversalDurationSeconds1 + offStreetTime;
         startState1.distance = split.distance1_mm + split.distanceToEdge_mm;
         edge.advance();
 
         // Speed can be different on opposite sides of the same street
         speedMetersPerSecond = edge.calculateSpeed(profileRequest, streetMode);
-        startState0.weight = (int) ((split.distance0_mm / 1000) / speedMetersPerSecond) + offStreetTime;
-        startState0.durationSeconds = startState0.weight;
+        float traversalTimeSeconds0 = (float) ((split.distance0_mm / 1000d) / speedMetersPerSecond);
+        int traversalDurationSeconds0 = (int) traversalTimeSeconds0;
+        int traversalWeight0 = traversalDurationSeconds0;
+        if (streetMode == StreetMode.CAR) {
+            traversalWeight0 = (int) Math.ceil(
+                    travelCostCalculator.getGeneralizedTravelCost(edge, offStreetTime, traversalTimeSeconds0)
+            );
+        }
+        startState0.weight = traversalWeight0 + offStreetTime;
+        startState0.durationSeconds = traversalDurationSeconds0 + offStreetTime;
         startState0.distance = split.distance0_mm + split.distanceToEdge_mm;
 
         // FIXME Below is reversing the vertices, but then aren't the weights, times, distances wrong? Why are we even doing this?
