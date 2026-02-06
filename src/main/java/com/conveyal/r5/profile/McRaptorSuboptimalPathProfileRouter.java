@@ -90,6 +90,7 @@ public class McRaptorSuboptimalPathProfileRouter {
 
     private LegMode[] egressModesArray;
     private TIntIntMap[] egressTimesArray;
+    private int egressArraySize = 0;
 
     public McRaptorSuboptimalPathProfileRouter(
             TransportNetwork network,
@@ -135,20 +136,7 @@ public class McRaptorSuboptimalPathProfileRouter {
 
         this.statePool = statePool;
 
-        if (egressTimes != null) {
-            int size = egressTimes.size();
-            this.egressModesArray = new LegMode[size];
-            this.egressTimesArray = new TIntIntMap[size];
-            int i = 0;
-            for (Map.Entry<LegMode, TIntIntMap> entry : egressTimes.entrySet()) {
-                this.egressModesArray[i] = entry.getKey();
-                this.egressTimesArray[i] = entry.getValue();
-                i++;
-            }
-        } else {
-            this.egressModesArray = null;
-            this.egressTimesArray = null;
-        }
+        updateEgressArrays(egressTimes);
     }
 
     /**
@@ -171,10 +159,13 @@ public class McRaptorSuboptimalPathProfileRouter {
 
         // Clear search state (just clears references, doesn't affect the pool)
         this.bestStates.clear();
+        this.bestStatesBeforeRound.clear();
+        this.bestNonTransferStatesBeforeRound.clear();
         this.timesAtStopsEachIteration.clear();
         this.touchedStops.clear();
         this.touchedPatterns.clear();
         this.patternsNearDestination.clear();
+        this.stopsTouchedByTransfer.clear();
         this.bestTimesAtTargetByAccessMode.clear();
         this.round = 0;
         this.departureTime = 0;
@@ -188,11 +179,42 @@ public class McRaptorSuboptimalPathProfileRouter {
         this.mersenneTwister = new MersenneTwister((int) (request.fromLat * 1e9));
         this.offsets = new FrequencyRandomOffsets(network.transitLayer);
 
+        updateEgressArrays(egressTimes);
+
         nextTravelTimeArray = 0;
 
         this.statesPerPatternSize = 0;
         this.touchedStopsInRoundSize = 0;
         this.touchedStopsLastRoundSize = 0;
+    }
+
+    private void updateEgressArrays(Map<LegMode, TIntIntMap> egressTimes) {
+        if (egressTimes == null || egressTimes.isEmpty()) {
+            this.egressModesArray = null;
+            this.egressTimesArray = null;
+            this.egressArraySize = 0;
+            return;
+        }
+
+        int size = egressTimes.size();
+        if (this.egressModesArray == null || this.egressModesArray.length < size) {
+            this.egressModesArray = new LegMode[size];
+            this.egressTimesArray = new TIntIntMap[size];
+        }
+
+        int i = 0;
+        for (Map.Entry<LegMode, TIntIntMap> entry : egressTimes.entrySet()) {
+            this.egressModesArray[i] = entry.getKey();
+            this.egressTimesArray[i] = entry.getValue();
+            i++;
+        }
+
+        // Clear trailing references when the number of egress modes shrinks.
+        for (int j = i; j < this.egressArraySize; j++) {
+            this.egressModesArray[j] = null;
+            this.egressTimesArray[j] = null;
+        }
+        this.egressArraySize = i;
     }
 
     public McRaptorStatePool getStatePool() {
@@ -825,7 +847,7 @@ public class McRaptorSuboptimalPathProfileRouter {
             int egressTimeWithSlowestEgressMode = -1;
 
             // Array iteration - no iterator allocation!
-            for (int i = 0; i < egressModesArray.length; i++) {
+            for (int i = 0; i < egressArraySize; i++) {
                 TIntIntMap times = egressTimesArray[i];
                 if (!times.containsKey(stop)) continue;
                 int timeAtDest = time + times.get(stop);
