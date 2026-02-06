@@ -246,6 +246,7 @@ public class StreetRouter {
      */
     public TIntIntMap getReachedVertices () {
         TIntIntMap result = new TIntIntHashMap();
+        final int noEntryValue = result.getNoEntryValue();
         EdgeStore.Edge e = streetLayer.edgeStore.getCursor();
 
         // Manual iteration to avoid SingletonList allocation in forEachEntry
@@ -277,8 +278,11 @@ public class StreetRouter {
             e.seek(eidx);
             int vidx = e.getToVertex();
 
-            if (!result.containsKey(vidx) || result.get(vidx) > state.getRoutingVariable(quantityToMinimize))
-                result.put(vidx, state.getRoutingVariable(quantityToMinimize));
+            int candidateValue = state.getRoutingVariable(quantityToMinimize);
+            int currentValue = result.get(vidx);
+            if (currentValue == noEntryValue || currentValue > candidateValue) {
+                result.put(vidx, candidateValue);
+            }
 
             return true; // Continue iteration
         });
@@ -334,7 +338,8 @@ public class StreetRouter {
             v.seek(vidx);
 
             if (v.getFlag(flag)) {
-                if (!result.containsKey(vidx) || result.get(vidx).getRoutingVariable(quantityToMinimize) >
+                State existing = result.get(vidx);
+                if (existing == null || existing.getRoutingVariable(quantityToMinimize) >
                         state.getRoutingVariable(quantityToMinimize)) {
                     result.put(vidx, state);
                 }
@@ -642,6 +647,21 @@ public class StreetRouter {
     }
 
     /**
+     * Reset the router state and replace calculators for the next search.
+     * This is intended for safe router reuse when generalized-cost inputs vary between requests.
+     */
+    public void reset(
+            TravelTimeCalculator travelTimeCalculator,
+            TurnCostCalculator turnCostCalculator,
+            TravelCostCalculator travelCostCalculator
+    ) {
+        reset();
+        this.travelTimeCalculator = travelTimeCalculator;
+        this.turnCostCalculator = turnCostCalculator;
+        this.travelCostCalculator = travelCostCalculator;
+    }
+
+    /**
      * Finds closest vertex which has streetMode permissions
      *
      * @param lat Latitude in floating point (not fixed int) degrees.
@@ -756,8 +776,10 @@ public class StreetRouter {
         } else if (flagSearch != null) {
             routingVisitor = new VertexFlagVisitor(streetLayer, quantityToMinimize, flagSearch, flagSearchQuantity, profileRequest.getMinTimeSeconds(streetMode));
         }
+        final boolean reverseSearch = profileRequest.reverseSearch;
         while (!queue.isEmpty()) {
             State s0 = queue.poll();
+            int s0Cost = s0.getRoutingVariable(quantityToMinimize);
 
             if (DEBUG_OUTPUT) {
                 VertexStore.Vertex v = streetLayer.vertexStore.getCursor(s0.vertex);
@@ -794,7 +816,7 @@ public class StreetRouter {
 
             // End the search if the state coming off the queue has exceeded the best-known cost to reach the destination.
             // TODO how important is this? How can this even happen? In a street search, is target pruning even effective?
-            if (s0.getRoutingVariable(quantityToMinimize) > bestValueAtDestination) break;
+            if (s0Cost > bestValueAtDestination) break;
 
             // Hit RoutingVistor callbacks to monitor search progress.
             if (routingVisitor != null) {
@@ -820,20 +842,21 @@ public class StreetRouter {
             }
 
             TIntList edgeList;
-            if (profileRequest.reverseSearch) {
+            if (reverseSearch) {
                 edgeList = streetLayer.incomingEdges.get(s0.vertex);
             } else {
                 edgeList = streetLayer.outgoingEdges.get(s0.vertex);
             }
             // explore edges leaving this vertex
             // Manual iteration to avoid lambda allocation
-            for (int i = 0; i < edgeList.size(); i++) {
+            final int edgeCount = edgeList.size();
+            for (int i = 0; i < edgeCount; i++) {
                 int eidx = edgeList.get(i);
 
                 edge.seek(eidx);
                 State s1 = statePool.borrow();
                 if (edge.traverseInto(s1, s0, streetMode, profileRequest, turnCostCalculator, travelTimeCalculator, travelCostCalculator)) {
-                    if (s1.distance <= distanceLimitMm && s1.getDurationSeconds() < tmpTimeLimitSeconds) {
+                    if (s1.distance <= distanceLimitMm && s1.durationSeconds < tmpTimeLimitSeconds) {
                         if (!isDominated(s1)) {
                             s1.heuristic = calcHeuristic(s1);
                             bestStatesAtEdge.put(s1.backEdge, s1);
@@ -924,7 +947,15 @@ public class StreetRouter {
         if (s1.turnRestrictions == null && s2.turnRestrictions == null) {
             // The simple case where neither state has turn restrictions.
             // Note this is <= rather than < because we want an existing state with the same weight to beat a new one.
-            return s1.getRoutingVariable(quantityToMinimize) <= s2.getRoutingVariable(quantityToMinimize);
+            if (quantityToMinimize == State.RoutingVariable.WEIGHT) {
+                return s1.weight <= s2.weight;
+            } else if (quantityToMinimize == State.RoutingVariable.DURATION_SECONDS) {
+                return s1.durationSeconds <= s2.durationSeconds;
+            } else if (quantityToMinimize == State.RoutingVariable.DISTANCE_MILLIMETERS) {
+                return s1.distance <= s2.distance;
+            } else {
+                return s1.getRoutingVariable(quantityToMinimize) <= s2.getRoutingVariable(quantityToMinimize);
+            }
         }
         // At least one of the states has turn restrictions.
         // Generally, a state with turn restrictions cannot dominate another state and cannot be dominated.
@@ -989,6 +1020,7 @@ public class StreetRouter {
      */
     public State getStateAtVertex (int vertexIndex) {
         State ret = null;
+        int retValue = Integer.MAX_VALUE;
 
         TIntList edgeList;
         if (profileRequest.reverseSearch) {
@@ -1004,9 +1036,10 @@ public class StreetRouter {
 
             if (state == null) continue;
 
-            if (ret == null) ret = state;
-            else if (ret.getRoutingVariable(quantityToMinimize) > state.getRoutingVariable(quantityToMinimize)) {
+            int stateValue = state.getRoutingVariable(quantityToMinimize);
+            if (ret == null || retValue > stateValue) {
                 ret = state;
+                retValue = stateValue;
             }
         }
 
@@ -1027,13 +1060,13 @@ public class StreetRouter {
      * @return
      */
     public State getState(Split split) {
-        // get all the states at all the vertices
-        List<State> relevantStates = new ArrayList<>();
-
+        State best = null;
+        int bestValue = Integer.MAX_VALUE;
+        final boolean reverseSearch = profileRequest.reverseSearch;
         EdgeStore.Edge e = streetLayer.edgeStore.getCursor(split.edge);
 
         TIntList edgeList;
-        if (profileRequest.reverseSearch) {
+        if (reverseSearch) {
             edgeList = streetLayer.outgoingEdges.get(split.vertex1);
         } else {
             edgeList = streetLayer.incomingEdges.get(split.vertex0);
@@ -1044,19 +1077,13 @@ public class StreetRouter {
             // Fast path: single value
             if (bestStatesAtEdge.isSingleValue(eidx)) {
                 State s = bestStatesAtEdge.getSingle(eidx);
-
-                if (e.canTurnFrom(s, new State(-1, split.edge, s), profileRequest.reverseSearch)) {
-                    State ret = new State(-1, split.edge, s);
-                    ret.streetMode = s.streetMode;
-
-                    int turnCost = this.turnCostCalculator.computeTurnCost(s.backEdge, split.edge, s.streetMode);
-                    int traversalCost = (int) Math.round(split.distance0_mm / 1000d / e.calculateSpeed(profileRequest, s.streetMode));
-
-                    ret.incrementWeight(turnCost + traversalCost);
-                    ret.incrementTimeInSeconds(turnCost + traversalCost);
-                    ret.distance += split.distance0_mm;
-
-                    relevantStates.add(ret);
+                State candidate = createSplitCandidateState(e, s, split.edge, split.distance0_mm, reverseSearch);
+                if (candidate != null) {
+                    int candidateValue = candidate.getRoutingVariable(quantityToMinimize);
+                    if (candidateValue < bestValue) {
+                        best = candidate;
+                        bestValue = candidateValue;
+                    }
                 }
             }
             // Slow path: multiple values
@@ -1064,30 +1091,22 @@ public class StreetRouter {
                 Collection<State> states = bestStatesAtEdge.get(eidx);
                 if (states == null || states.isEmpty()) continue;
 
-                // Original stream logic for multi-value case
-                states.stream()
-                        .filter(s -> e.canTurnFrom(s, new State(-1, split.edge, s), profileRequest.reverseSearch))
-                        .map(s -> {
-                            State ret = new State(-1, split.edge, s);
-                            ret.streetMode = s.streetMode;
-
-                            int turnCost = this.turnCostCalculator.computeTurnCost(s.backEdge, split.edge, s.streetMode);
-                            int traversalCost = (int) Math.round(split.distance0_mm / 1000d / e.calculateSpeed(profileRequest, s.streetMode));
-
-                            ret.incrementWeight(turnCost + traversalCost);
-                            ret.incrementTimeInSeconds(turnCost + traversalCost);
-                            ret.distance += split.distance0_mm;
-
-                            return ret;
-                        })
-                        .forEach(relevantStates::add);
+                for (State s : states) {
+                    State candidate = createSplitCandidateState(e, s, split.edge, split.distance0_mm, reverseSearch);
+                    if (candidate == null) continue;
+                    int candidateValue = candidate.getRoutingVariable(quantityToMinimize);
+                    if (candidateValue < bestValue) {
+                        best = candidate;
+                        bestValue = candidateValue;
+                    }
+                }
             }
         }
 
         // advance to back edge
         e.advance();
 
-        if (profileRequest.reverseSearch) {
+        if (reverseSearch) {
             edgeList = streetLayer.outgoingEdges.get(split.vertex0);
         } else {
             edgeList = streetLayer.incomingEdges.get(split.vertex1);
@@ -1099,19 +1118,13 @@ public class StreetRouter {
             // Fast path: single value
             if (bestStatesAtEdge.isSingleValue(eidx)) {
                 State s = bestStatesAtEdge.getSingle(eidx);
-
-                if (e.canTurnFrom(s, new State(-1, split.edge + 1, s), profileRequest.reverseSearch)) {
-                    State ret = new State(-1, split.edge + 1, s);
-                    ret.streetMode = s.streetMode;
-
-                    int turnCost = this.turnCostCalculator.computeTurnCost(s.backEdge, split.edge + 1, s.streetMode);
-                    int traversalCost = (int) Math.round(split.distance1_mm / 1000d / e.calculateSpeed(profileRequest, s.streetMode));
-
-                    ret.incrementWeight(turnCost + traversalCost);
-                    ret.incrementTimeInSeconds(turnCost + traversalCost);
-                    ret.distance += split.distance1_mm;
-
-                    relevantStates.add(ret);
+                State candidate = createSplitCandidateState(e, s, split.edge + 1, split.distance1_mm, reverseSearch);
+                if (candidate != null) {
+                    int candidateValue = candidate.getRoutingVariable(quantityToMinimize);
+                    if (candidateValue < bestValue) {
+                        best = candidate;
+                        bestValue = candidateValue;
+                    }
                 }
             }
             // Slow path: multiple values
@@ -1119,37 +1132,41 @@ public class StreetRouter {
                 Collection<State> states = bestStatesAtEdge.get(eidx);
                 if (states == null || states.isEmpty()) continue;
 
-                // Original stream logic for multi-value case
-                states.stream()
-                        .filter(s -> e.canTurnFrom(s, new State(-1, split.edge + 1, s), profileRequest.reverseSearch))
-                        .map(s -> {
-                            State ret = new State(-1, split.edge + 1, s);
-                            ret.streetMode = s.streetMode;
-
-                            int turnCost = this.turnCostCalculator.computeTurnCost(s.backEdge, split.edge + 1, s.streetMode);
-                            int traversalCost = (int) Math.round(split.distance1_mm / 1000d / e.calculateSpeed(profileRequest, s.streetMode));
-
-                            ret.incrementWeight(turnCost + traversalCost);
-                            ret.incrementTimeInSeconds(turnCost + traversalCost);
-                            ret.distance += split.distance1_mm;
-
-                            return ret;
-                        })
-                        .forEach(relevantStates::add);
+                for (State s : states) {
+                    State candidate = createSplitCandidateState(e, s, split.edge + 1, split.distance1_mm, reverseSearch);
+                    if (candidate == null) continue;
+                    int candidateValue = candidate.getRoutingVariable(quantityToMinimize);
+                    if (candidateValue < bestValue) {
+                        best = candidate;
+                        bestValue = candidateValue;
+                    }
+                }
             }
         }
+        return best;
+    }
 
-        if (relevantStates.isEmpty()) {
+    private State createSplitCandidateState(
+            EdgeStore.Edge edge,
+            State source,
+            int targetEdge,
+            int splitDistanceMm,
+            boolean reverseSearch
+    ) {
+        State candidate = new State(-1, targetEdge, source);
+        candidate.streetMode = source.streetMode;
+        if (!edge.canTurnFrom(source, candidate, reverseSearch)) {
             return null;
         }
-        State state = relevantStates.get(0);
-        for (int i = 1; i < relevantStates.size(); i++) {
-            State candidate = relevantStates.get(i);
-            if (candidate.getRoutingVariable(quantityToMinimize) < state.getRoutingVariable(quantityToMinimize)) {
-                state = candidate;
-            }
-        }
-        return state;
+
+        int turnCost = this.turnCostCalculator.computeTurnCost(source.backEdge, targetEdge, source.streetMode);
+        int traversalCost = (int) Math.round(splitDistanceMm / 1000d / edge.calculateSpeed(profileRequest, source.streetMode));
+        int totalCost = turnCost + traversalCost;
+
+        candidate.incrementWeight(totalCost);
+        candidate.incrementTimeInSeconds(totalCost);
+        candidate.distance += splitDistanceMm;
+        return candidate;
     }
 
     public Split getDestinationSplit() {

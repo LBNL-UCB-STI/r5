@@ -11,7 +11,9 @@ import java.util.LinkedList;
  */
 public class FareDominatingList implements DominatingList {
     private final int maxFare;
-    private final int maxClockTime;
+    private int maxClockTime;
+    private final boolean dynamicMaxClockTime;
+    private final int maxTripDurationSeconds;
     private InRoutingFareCalculator fareCalculator;
 
     private LinkedList<McRaptorSuboptimalPathProfileRouter.McRaptorState> states = new LinkedList<>();
@@ -20,12 +22,38 @@ public class FareDominatingList implements DominatingList {
         this.fareCalculator = fareCalculator;
         this.maxFare = maxFare;
         this.maxClockTime = maxClockTime;
+        this.dynamicMaxClockTime = false;
+        this.maxTripDurationSeconds = 0;
+    }
+
+    /**
+     * Create a list whose max clock time can be recomputed for each sampled departure.
+     */
+    public FareDominatingList(
+            InRoutingFareCalculator fareCalculator,
+            int maxFare,
+            int departureTime,
+            int maxTripDurationSeconds
+    ) {
+        this.fareCalculator = fareCalculator;
+        this.maxFare = maxFare;
+        this.maxTripDurationSeconds = maxTripDurationSeconds;
+        this.maxClockTime = departureTime + maxTripDurationSeconds;
+        this.dynamicMaxClockTime = true;
     }
 
     @Override
     public void reset() {
         states.clear();  // Clears the list
         // maxFare, maxClockTime, fareCalculator are final config - don't reset
+    }
+
+    @Override
+    public void resetForDepartureTime(int departureTime) {
+        states.clear();
+        if (dynamicMaxClockTime) {
+            this.maxClockTime = departureTime + maxTripDurationSeconds;
+        }
     }
 
     /**

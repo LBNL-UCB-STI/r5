@@ -252,7 +252,8 @@ public class TravelTimeComputer {
                     (departureTime) -> new FareDominatingList(
                             request.inRoutingFareCalculator,
                             request.maxFare,
-                            departureTime + request.maxTripDurationMinutes * FastRaptorWorker.SECONDS_PER_MINUTE);
+                            departureTime,
+                            request.maxTripDurationMinutes * FastRaptorWorker.SECONDS_PER_MINUTE);
             McRaptorSuboptimalPathProfileRouter mcRaptorWorker = new McRaptorSuboptimalPathProfileRouter(network,
                     request, null, null, listSupplier, InRoutingFareCalculator.getCollator(request));
             mcRaptorWorker.route();

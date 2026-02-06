@@ -87,6 +87,11 @@ public class McRaptorStatePool {
         currentlyInUse = 0;
     }
 
+    /** Rewind state-bag borrow cursor without touching the state pool itself. */
+    public void resetStateBags() {
+        nextStateBag = 0;
+    }
+
     // Getters for stats
     public int getPoolSize() {
         return pool.length;

@@ -25,6 +25,14 @@ public interface DominatingList {
     /** Reset this list for reuse, clearing all states but keeping allocated capacity */
     void reset();
 
+    /**
+     * Reset and reconfigure this list for a new departure time without allocating new list instances.
+     * Implementations that do not depend on departure time can use the default behavior.
+     */
+    default void resetForDepartureTime(int departureTime) {
+        reset();
+    }
+
     /** get non-dominated states at this location */
     Collection<McRaptorSuboptimalPathProfileRouter.McRaptorState> getNonDominatedStates ();
 }

@@ -81,6 +81,7 @@ public class McRaptorSuboptimalPathProfileRouter {
     private int[] touchedStopsInRound = new int[1000];
     private int touchedStopsLastRoundSize = 0;
     private int touchedStopsInRoundSize = 0;
+    private final BitSet stopsTouchedByTransfer;
     private final TIntObjectMap<Collection<McRaptorState>> bestStatesBeforeRound;
     private final TIntObjectMap<Collection<McRaptorState>> bestNonTransferStatesBeforeRound;
 
@@ -128,6 +129,7 @@ public class McRaptorSuboptimalPathProfileRouter {
         this.boardTimesForFrequencyArray = new int[100];
         this.tripIndicesArray = new int[100];
         this.statesPerPatternSize = 0;
+        this.stopsTouchedByTransfer = new BitSet(network.transitLayer.getStopCount());
         this.bestStatesBeforeRound = new TIntObjectHashMap<>(estimatedStops, 0.75f);
         this.bestNonTransferStatesBeforeRound = new TIntObjectHashMap<>(estimatedStops, 0.75f);
 
@@ -211,6 +213,11 @@ public class McRaptorSuboptimalPathProfileRouter {
         // Modeify does its own pre-computation of accessTimes, but Analysis does not
         if (accessTimes == null) computeAccessTimes();
 
+        // Reset pool once per route. For multi-departure sampling, pooled states can still be referenced
+        // across samples (e.g., destination states), so do not reset between departures unless results
+        // are fully consumed or destination states are copied/non-pooled.
+        statePool.reset();
+
         long startTime = System.currentTimeMillis();
 
         // Optimization for modeify (PointToPointQuery): find patterns near destination
@@ -269,9 +276,10 @@ public class McRaptorSuboptimalPathProfileRouter {
             }
 
             bestStates.clear();
+            // Reuse existing state bags across departures in the same route invocation.
+            statePool.resetStateBags();
             touchedPatterns.clear();
             touchedStops.clear();
-            statePool.reset();
             // Round 0 is in essence non-transit access.
             round = 0;
             // final to allow use in the lambda function below
@@ -393,6 +401,7 @@ public class McRaptorSuboptimalPathProfileRouter {
                     LOG.debug("Skipping path: missing access/egress times (accessMode={}, egressMode={})",
                             s.accessMode, s.egressMode);
                 }
+                statePool.returnState(s);
                 continue;
             }
             try {
@@ -407,6 +416,10 @@ public class McRaptorSuboptimalPathProfileRouter {
                 if (LOG.isDebugEnabled()) {
                     LOG.debug("Skipping path due to missing access/egress stop: {}", ex.getMessage());
                 }
+            } finally {
+                // After PathWithTimes is constructed, the McRaptorState is no longer needed.
+                // Return it to the pool to reduce live set size.
+                statePool.returnState(s);
             }
         }
 
@@ -488,10 +501,12 @@ public class McRaptorSuboptimalPathProfileRouter {
                     !request.transitModes.contains(mode)) {
                 continue;
             }
+            List<TripSchedule> tripSchedules = pattern.tripSchedules;
+            int[] patternStops = pattern.stops;
 
             // ride along the entire pattern, picking up states as we go
-            for (int stopPositionInPattern = 0; stopPositionInPattern < pattern.stops.length; stopPositionInPattern++) {
-                int stop = pattern.stops[stopPositionInPattern];
+            for (int stopPositionInPattern = 0; stopPositionInPattern < patternStops.length; stopPositionInPattern++) {
+                int stop = patternStops[stopPositionInPattern];
 
                 if (request.wheelchair) {
                     if (!network.transitLayer.stopsWheelchair.get(stop)) {
@@ -499,7 +514,8 @@ public class McRaptorSuboptimalPathProfileRouter {
                     }
                 }
 
-                boolean stopReachedViaDifferentPattern = bestStatesBeforeRound.containsKey(stop);
+                Collection<McRaptorState> statesAtStopFromPreviousRound = bestStatesBeforeRound.get(stop);
+                boolean stopReachedViaDifferentPattern = statesAtStopFromPreviousRound != null;
 
                 // get off the bus, if we can
                 // Use the field instead of local var
@@ -507,7 +523,7 @@ public class McRaptorSuboptimalPathProfileRouter {
                     McRaptorState state = statesPerPattern.get(i);
                     int tripIndexInPattern = tripIndicesArray[i];
                     int boardStopPosition = boardStopPositionsArray[i];
-                    TripSchedule sched = pattern.tripSchedules.get(tripIndexInPattern);
+                    TripSchedule sched = tripSchedules.get(tripIndexInPattern);
                     int boardTime = boardTimesForFrequencyArray[i];
                     int arrival;  // Declare arrival here
 
@@ -528,7 +544,7 @@ public class McRaptorSuboptimalPathProfileRouter {
 
                 // get on the bus, if we can
                 if (stopReachedViaDifferentPattern) {
-                    for (McRaptorState state : bestStatesBeforeRound.get(stop)) {
+                    for (McRaptorState state : statesAtStopFromPreviousRound) {
                         if (state.round != round - 1) continue;
 
                         if (pattern.hasFrequencies && pattern.hasSchedules) {
@@ -538,7 +554,8 @@ public class McRaptorSuboptimalPathProfileRouter {
                         int currentTrip = -1;
 
                         if (pattern.hasSchedules) {
-                            for (TripSchedule tripSchedule : pattern.tripSchedules) {
+                            int earliestPossibleBoardTime = state.time + BOARD_SLACK;
+                            for (TripSchedule tripSchedule : tripSchedules) {
                                 currentTrip++;
                                 //Skips trips which don't run on wanted date
                                 if (!servicesActive.get(tripSchedule.serviceCode) ||
@@ -548,7 +565,7 @@ public class McRaptorSuboptimalPathProfileRouter {
                                 }
 
                                 int departure = tripSchedule.departures[stopPositionInPattern];
-                                if (departure > state.time + BOARD_SLACK) {
+                                if (departure > earliestPossibleBoardTime) {
                                     // Add to the field
                                     ensureCapacity(statesPerPatternSize + 1);
                                     statesPerPattern.set(statesPerPatternSize, state);
@@ -578,7 +595,9 @@ public class McRaptorSuboptimalPathProfileRouter {
                                 }
                             }
                         } else if (pattern.hasFrequencies) {
-                            for (TripSchedule tripSchedule : pattern.tripSchedules) {
+                            int earliestPossibleBoardTime = state.time + BOARD_SLACK;
+                            int[][] offsetsForPattern = offsets.offsets.get(patIdx);
+                            for (TripSchedule tripSchedule : tripSchedules) {
                                 currentTrip++;
                                 if (!servicesActive.get(tripSchedule.serviceCode) ||
                                     //Skip trips that can't be used with wheelchairs when wheelchair trip is requested
@@ -586,14 +605,14 @@ public class McRaptorSuboptimalPathProfileRouter {
                                     continue;
                                 }
 
-                                int earliestPossibleBoardTime = state.time + BOARD_SLACK;
+                                int[] offsetsForTrip = offsetsForPattern[currentTrip];
 
                                 // find a departure on this trip
                                 for (int frequencyEntry = 0; frequencyEntry < tripSchedule.startTimes.length; frequencyEntry++) {
                                     // we have to check all trips and frequency entries because, unlike
                                     // schedule-based trips, these are not sorted
                                     int departure = tripSchedule.startTimes[frequencyEntry] +
-                                            offsets.offsets.get(patIdx)[currentTrip][frequencyEntry] +
+                                            offsetsForTrip[frequencyEntry] +
                                             tripSchedule.departures[stopPositionInPattern];
 
                                     int latestDeparture = tripSchedule.endTimes[frequencyEntry] +
@@ -631,7 +650,7 @@ public class McRaptorSuboptimalPathProfileRouter {
 
     /** Perform transfers */
     private void doTransfers () {
-        BitSet stopsTouchedByTransfer = new BitSet(network.transitLayer.getStopCount());
+        stopsTouchedByTransfer.clear();
         double walkSpeedMillimetersPerSecond = request.walkSpeed * 1000;
         for (int stop = touchedStops.nextSetBit(0); stop >= 0; stop = touchedStops.nextSetBit(stop + 1)) {
             TIntList transfers = network.transitLayer.transfersForStop.get(stop);
@@ -710,21 +729,15 @@ public class McRaptorSuboptimalPathProfileRouter {
         }
         Arrays.fill(timesAtStopsThisIteration, FastRaptorWorker.UNREACHED);
 
-        for (int stop = 0; stop < network.transitLayer.getStopCount(); stop++) {
-            // find the best state at the stop
-            McRaptorStateBag bag = bestStates.get(stop);
-
-            if (bag == null) continue;
+        final int maxClockTime = departureTime + request.maxTripDurationMinutes * 60;
+        bestStates.forEachEntry((stop, bag) -> {
             int bestClockTimeGivenConstraint = collapseParetoSurfaceToTime.collate(bag.getNonTransferStates(),
-                            departureTime + request.maxTripDurationMinutes * 60);
-            if (bestClockTimeGivenConstraint < timesAtStopsThisIteration[stop]){
-                timesAtStopsThisIteration[stop] = bestClockTimeGivenConstraint;
+                    maxClockTime);
+            if (bestClockTimeGivenConstraint != FastRaptorWorker.UNREACHED) {
+                timesAtStopsThisIteration[stop] = bestClockTimeGivenConstraint - departureTime;
             }
-        }
-
-        for (int i = 0; i < timesAtStopsThisIteration.length; i++) {
-            if (timesAtStopsThisIteration[i] != FastRaptorWorker.UNREACHED) timesAtStopsThisIteration[i] -= departureTime;
-        }
+            return true;
+        });
 
         timesAtStopsEachIteration.add(timesAtStopsThisIteration);
     }
@@ -796,9 +809,11 @@ public class McRaptorSuboptimalPathProfileRouter {
             }
         }
 
-        if (!bestStates.containsKey(stop)) bestStates.put(stop, statePool.borrowStateBag(listSupplier, departureTime));
-
         McRaptorStateBag bag = bestStates.get(stop);
+        if (bag == null) {
+            bag = statePool.borrowStateBag(listSupplier, departureTime);
+            bestStates.put(stop, bag);
+        }
         boolean optimal = bag.add(state);
 
         if (!optimal) {
@@ -985,9 +1000,9 @@ public class McRaptorSuboptimalPathProfileRouter {
         }
 
         public void reset(IntFunction<DominatingList> listSupplier, int departureTime) {
-            // Just reset existing lists instead of creating new ones
-            best.reset();
-            nonTransfer.reset();
+            // Reconfigure existing lists in place for this departure time (no list allocation).
+            best.resetForDepartureTime(departureTime);
+            nonTransfer.resetForDepartureTime(departureTime);
         }
 
         public Collection<McRaptorState> getBestStates () {
