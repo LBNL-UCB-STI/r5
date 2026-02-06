@@ -1160,11 +1160,18 @@ public class StreetRouter {
         }
 
         int turnCost = this.turnCostCalculator.computeTurnCost(source.backEdge, targetEdge, source.streetMode);
-        int traversalCost = (int) Math.round(splitDistanceMm / 1000d / edge.calculateSpeed(profileRequest, source.streetMode));
-        int totalCost = turnCost + traversalCost;
+        int traversalTimeSeconds = (int) Math.round(splitDistanceMm / 1000d / edge.calculateSpeed(profileRequest, source.streetMode));
+        int traversalWeight = traversalTimeSeconds;
 
-        candidate.incrementWeight(totalCost);
-        candidate.incrementTimeInSeconds(totalCost);
+        // For car routing, weight is generalized cost, not just time.
+        if (source.streetMode == StreetMode.CAR) {
+            traversalWeight = (int) Math.ceil(
+                    travelCostCalculator.getGeneralizedTravelCost(edge, source.durationSeconds, traversalTimeSeconds)
+            );
+        }
+
+        candidate.incrementWeight(turnCost + traversalWeight);
+        candidate.incrementTimeInSeconds(turnCost + traversalTimeSeconds);
         candidate.distance += splitDistanceMm;
         return candidate;
     }
