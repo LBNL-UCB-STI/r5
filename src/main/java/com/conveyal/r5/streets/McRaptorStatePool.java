@@ -4,7 +4,10 @@ import com.conveyal.r5.profile.DominatingList;
 import com.conveyal.r5.profile.McRaptorSuboptimalPathProfileRouter;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.function.IntFunction;
 
 public class McRaptorStatePool {
@@ -24,6 +27,9 @@ public class McRaptorStatePool {
     private List<McRaptorSuboptimalPathProfileRouter.McRaptorStateBag> stateBagPool = new ArrayList<>(5000);
     private int nextStateBag = 0;
     private int maxStateBagsInUse = 0;
+    /** Tracks which state instances are currently present in the available segment of the pool array. */
+    private final Set<McRaptorSuboptimalPathProfileRouter.McRaptorState> inPoolSet =
+            Collections.newSetFromMap(new IdentityHashMap<>());
 
     public McRaptorStatePool(int poolSize) {
         this.pool = new McRaptorSuboptimalPathProfileRouter.McRaptorState[poolSize];
@@ -31,6 +37,7 @@ public class McRaptorStatePool {
         // Pre-populate entire pool
         for (int i = 0; i < poolSize; i++) {
             pool[i] = new McRaptorSuboptimalPathProfileRouter.McRaptorState();
+            inPoolSet.add(pool[i]);
         }
         this.nextAvailable = poolSize;
     }
@@ -46,6 +53,7 @@ public class McRaptorStatePool {
 
         if (nextAvailable > 0) {
             McRaptorSuboptimalPathProfileRouter.McRaptorState state = pool[--nextAvailable];
+            inPoolSet.remove(state);
             if (!state.inPool) {
                 int occurrences = countOccurrencesInPool(state);
                 throw new IllegalStateException(
@@ -100,9 +108,29 @@ public class McRaptorStatePool {
                     )
             );
         }
+        if (inPoolSet.contains(s)) {
+            throw new IllegalStateException(
+                    String.format(
+                            "Duplicate insertion of McRaptorState into pool array: poolId=%d thread=%s ownerThreadId=%d " +
+                                    "stateId=%d stop=%d round=%d pattern=%d trip=%d time=%d nextAvailable=%d poolSize=%d",
+                            System.identityHashCode(this),
+                            Thread.currentThread().getName(),
+                            ownerThreadId,
+                            System.identityHashCode(s),
+                            s.stop,
+                            s.round,
+                            s.pattern,
+                            s.trip,
+                            s.time,
+                            nextAvailable,
+                            pool.length
+                    )
+            );
+        }
         if (nextAvailable < pool.length) {
             s.reset();
             pool[nextAvailable++] = s;
+            inPoolSet.add(s);
         }
         // Otherwise discard (pool is full or state was non-pooled)
     }
@@ -145,6 +173,8 @@ public class McRaptorStatePool {
             state.reset();
         }
         nextAvailable = pool.length;
+        inPoolSet.clear();
+        Collections.addAll(inPoolSet, pool);
         // Reset StateBag pool
         nextStateBag = 0;
         // Reset per-route counter
