@@ -38,6 +38,7 @@ import java.util.function.Supplier;
 public class McRaptorSuboptimalPathProfileRouter {
     
     private static final Logger LOG = LoggerFactory.getLogger(McRaptorSuboptimalPathProfileRouter.class);
+    private static final int MAX_BOARD_STOP_MISMATCH_LOGS = 20;
 
     private final McRaptorStatePool statePool;
 
@@ -93,6 +94,11 @@ public class McRaptorSuboptimalPathProfileRouter {
     private TIntIntMap[] egressTimesArray;
     private int egressArraySize = 0;
     private final AtomicBoolean inUse = new AtomicBoolean(false);
+    private int boardStopMismatchLogs = 0;
+    private boolean boardStopMismatchSuppressed = false;
+    private long routeInvocationSequence = 0;
+    private long activeRouteInvocationId = 0;
+    private int activeDepartureIndex = -1;
 
     public McRaptorSuboptimalPathProfileRouter(
             TransportNetwork network,
@@ -306,6 +312,8 @@ public class McRaptorSuboptimalPathProfileRouter {
             }
 
             for (int n = 0; n < departureTimes.size(); n++) {
+                activeRouteInvocationId = ++routeInvocationSequence;
+                activeDepartureIndex = n;
                 departureTime = departureTimes.get(n);
 
                 // we're not using range-raptor so it's safe to change the schedule on each search
@@ -839,14 +847,72 @@ public class McRaptorSuboptimalPathProfileRouter {
         // sanity check (anecdotally, this has no noticeable effect on speed)
         if (boardStopPosition >= 0) {
             TripPattern patt = network.transitLayer.tripPatterns.get(pattern);
+            if (boardStopPosition >= patt.stops.length) {
+                logBoardStopMismatch(
+                        "board position out of bounds",
+                        stop,
+                        boardStopPosition,
+                        alightStopPosition,
+                        pattern,
+                        trip,
+                        time,
+                        boardTime,
+                        accessMode,
+                        back,
+                        -1
+                );
+                return false;
+            }
             int boardStop = patt.stops[boardStopPosition];
 
-            if (boardStop != back.stop) {
-                LOG.error("Board stop position does not match board stop!");
+            if (back == null || boardStop != back.stop) {
+                logBoardStopMismatch(
+                        "board stop mismatch",
+                        stop,
+                        boardStopPosition,
+                        alightStopPosition,
+                        pattern,
+                        trip,
+                        time,
+                        boardTime,
+                        accessMode,
+                        back,
+                        boardStop
+                );
+                return false;
             }
 
+            if (alightStopPosition < 0 || alightStopPosition >= patt.stops.length) {
+                logBoardStopMismatch(
+                        "alight position out of bounds",
+                        stop,
+                        boardStopPosition,
+                        alightStopPosition,
+                        pattern,
+                        trip,
+                        time,
+                        boardTime,
+                        accessMode,
+                        back,
+                        boardStop
+                );
+                return false;
+            }
             if (stop != patt.stops[alightStopPosition]) {
-                LOG.error("Alight stop position does not match alight stop!");
+                logBoardStopMismatch(
+                        "alight stop mismatch",
+                        stop,
+                        boardStopPosition,
+                        alightStopPosition,
+                        pattern,
+                        trip,
+                        time,
+                        boardTime,
+                        accessMode,
+                        back,
+                        boardStop
+                );
+                return false;
             }
         }
 
@@ -880,6 +946,58 @@ public class McRaptorSuboptimalPathProfileRouter {
         }
 
         return optimal;
+    }
+
+    private void logBoardStopMismatch(
+            String reason,
+            int stop,
+            int boardStopPosition,
+            int alightStopPosition,
+            int pattern,
+            int trip,
+            int time,
+            int boardTime,
+            LegMode accessMode,
+            McRaptorState back,
+            int boardStop
+    ) {
+        if (boardStopMismatchLogs < MAX_BOARD_STOP_MISMATCH_LOGS) {
+            boardStopMismatchLogs++;
+            LOG.error(
+                    "Board/alight invariant failure: reason={}, routerId={}, routeInvocationId={}, departureIdx={}, " +
+                            "thread={}, round={}, departureTime={}, stop={}, boardStopPos={}, alightStopPos={}, " +
+                            "boardStop={}, pattern={}, trip={}, time={}, boardTime={}, accessMode={}, " +
+                            "backStop={}, backPattern={}, backTrip={}, backTime={}, backRound={}",
+                    reason,
+                    System.identityHashCode(this),
+                    activeRouteInvocationId,
+                    activeDepartureIndex,
+                    Thread.currentThread().getName(),
+                    round,
+                    departureTime,
+                    stop,
+                    boardStopPosition,
+                    alightStopPosition,
+                    boardStop,
+                    pattern,
+                    trip,
+                    time,
+                    boardTime,
+                    accessMode,
+                    back == null ? -1 : back.stop,
+                    back == null ? -1 : back.pattern,
+                    back == null ? -1 : back.trip,
+                    back == null ? -1 : back.time,
+                    back == null ? -1 : back.round
+            );
+        } else if (!boardStopMismatchSuppressed) {
+            boardStopMismatchSuppressed = true;
+            LOG.error(
+                    "Additional board/alight invariant failures suppressed after {} logs for routerId={}",
+                    MAX_BOARD_STOP_MISMATCH_LOGS,
+                    System.identityHashCode(this)
+            );
+        }
     }
 
     /** Create a new McRaptorStateBag with properly-configured dominance */

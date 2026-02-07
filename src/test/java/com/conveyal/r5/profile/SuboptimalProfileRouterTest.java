@@ -339,6 +339,91 @@ public class SuboptimalProfileRouterTest {
         assertTrue(ex.getMessage().contains("not thread-safe"));
     }
 
+    @Test
+    public void testRouterPoolingStressWithAlternatingModeShapes() {
+        ProfileRequest request = new ProfileRequest();
+        request.fromLat = 40.02183;
+        request.fromLon = -83.0889;
+        request.toLat = 39.9622;
+        request.toLon = -83.0007;
+        request.suboptimalMinutes = 2;
+        request.monteCarloDraws = 0;
+        request.date = java.time.LocalDate.of(2025, 10, 17);
+        request.fromTime = 7 * 3600;
+        request.toTime = 8 * 3600;
+        request.transitModes = EnumSet.allOf(TransitModes.class);
+
+        StreetRouter accessRouter = new StreetRouter(network.streetLayer);
+        accessRouter.streetMode = StreetMode.WALK;
+        accessRouter.profileRequest = request;
+        accessRouter.timeLimitSeconds = 120 * 60;
+        accessRouter.transitStopSearch = true;
+        accessRouter.setOrigin(request.fromLat, request.fromLon);
+        accessRouter.route();
+        TIntIntMap walkAccessTimes = accessRouter.getReachedStops();
+
+        request.reverseSearch = true;
+        StreetRouter egressRouter = new StreetRouter(network.streetLayer);
+        egressRouter.streetMode = StreetMode.WALK;
+        egressRouter.profileRequest = request;
+        egressRouter.timeLimitSeconds = 120 * 60;
+        egressRouter.transitStopSearch = true;
+        egressRouter.setOrigin(request.toLat, request.toLon);
+        egressRouter.route();
+        TIntIntMap walkEgressTimes = egressRouter.getReachedStops();
+        request.reverseSearch = false;
+
+        Map<LegMode, TIntIntMap> oneModeAccess = new LinkedHashMap<>();
+        oneModeAccess.put(LegMode.WALK, walkAccessTimes);
+        Map<LegMode, TIntIntMap> oneModeEgress = new LinkedHashMap<>();
+        oneModeEgress.put(LegMode.WALK, walkEgressTimes);
+
+        Map<LegMode, TIntIntMap> twoModeAccess = new LinkedHashMap<>();
+        twoModeAccess.put(LegMode.WALK, walkAccessTimes);
+        twoModeAccess.put(LegMode.CAR, walkAccessTimes);
+        Map<LegMode, TIntIntMap> twoModeEgress = new LinkedHashMap<>();
+        twoModeEgress.put(LegMode.WALK, walkEgressTimes);
+        twoModeEgress.put(LegMode.CAR, walkEgressTimes);
+
+        ProfileRequest oneModeRequest = request.clone();
+        oneModeRequest.accessModes = EnumSet.of(LegMode.WALK);
+        oneModeRequest.egressModes = EnumSet.of(LegMode.WALK);
+
+        ProfileRequest twoModeRequest = request.clone();
+        twoModeRequest.accessModes = EnumSet.of(LegMode.WALK, LegMode.CAR);
+        twoModeRequest.egressModes = EnumSet.of(LegMode.WALK, LegMode.CAR);
+
+        McRaptorSuboptimalPathProfileRouter pooledRouter = new McRaptorSuboptimalPathProfileRouter(
+                network,
+                oneModeRequest,
+                oneModeAccess,
+                oneModeEgress,
+                (t) -> new SuboptimalDominatingList(oneModeRequest.suboptimalMinutes),
+                null,
+                new McRaptorStatePool(50000)
+        );
+
+        for (int i = 0; i < 300; i++) {
+            boolean useTwoMode = (i % 2 == 0);
+            ProfileRequest activeRequest = useTwoMode ? twoModeRequest : oneModeRequest;
+            // Slightly vary window to perturb internal state trajectories.
+            activeRequest.fromTime = 7 * 3600 + (i % 60);
+            activeRequest.toTime = activeRequest.fromTime + 3600;
+
+            pooledRouter.reset(
+                    activeRequest,
+                    useTwoMode ? twoModeAccess : oneModeAccess,
+                    useTwoMode ? twoModeEgress : oneModeEgress,
+                    (t) -> new SuboptimalDominatingList(activeRequest.suboptimalMinutes),
+                    null
+            );
+
+            Collection<PathWithTimes> paths = pooledRouter.getPaths();
+            assertTrue("Expected at least one path at iteration " + i, paths.size() > 0);
+            assertAllPathLegIndicesConsistent(paths);
+        }
+    }
+
     private void assertAllPathLegIndicesConsistent(Collection<PathWithTimes> paths) {
         for (PathWithTimes path : paths) {
             for (int i = 0; i < path.patterns.length; i++) {
