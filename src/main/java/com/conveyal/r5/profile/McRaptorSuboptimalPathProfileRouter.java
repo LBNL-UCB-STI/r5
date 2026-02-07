@@ -86,7 +86,6 @@ public class McRaptorSuboptimalPathProfileRouter {
     private int touchedStopsInRoundSize = 0;
     private final BitSet stopsTouchedByTransfer;
     private final TIntObjectMap<Collection<McRaptorState>> bestStatesBeforeRound;
-    private final TIntObjectMap<Collection<McRaptorState>> bestNonTransferStatesBeforeRound;
 
     private List<int[]> travelTimeArrayPool = new ArrayList<>(200);
     private int nextTravelTimeArray = 0;
@@ -143,7 +142,6 @@ public class McRaptorSuboptimalPathProfileRouter {
         this.statesPerPatternSize = 0;
         this.stopsTouchedByTransfer = new BitSet(network.transitLayer.getStopCount());
         this.bestStatesBeforeRound = new TIntObjectHashMap<>(estimatedStops, 0.75f);
-        this.bestNonTransferStatesBeforeRound = new TIntObjectHashMap<>(estimatedStops, 0.75f);
 
         this.statePool = statePool;
 
@@ -178,7 +176,6 @@ public class McRaptorSuboptimalPathProfileRouter {
         // Clear search state (just clears references, doesn't affect the pool)
         this.bestStates.clear();
         this.bestStatesBeforeRound.clear();
-        this.bestNonTransferStatesBeforeRound.clear();
         this.timesAtStopsEachIteration.clear();
         this.touchedStops.clear();
         this.touchedPatterns.clear();
@@ -360,7 +357,6 @@ public class McRaptorSuboptimalPathProfileRouter {
                 for (int i = 0; i < touchedStopsLastRoundSize; i++) {
                     int stop = touchedStopsLastRound[i];
                     bestStatesBeforeRound.remove(stop);
-                    bestNonTransferStatesBeforeRound.remove(stop);
                 }
 
                 // TODO this means we wind up with some duplicated states.
@@ -512,14 +508,18 @@ public class McRaptorSuboptimalPathProfileRouter {
         for (int i = 0; i < touchedStopsLastRoundSize; i++) {
             int stop = touchedStopsLastRound[i];
             bestStatesBeforeRound.remove(stop);
-            bestNonTransferStatesBeforeRound.remove(stop);
         }
         // Populate new entries and track which stops we touched this round
         touchedStopsInRoundSize = 0;
 
         bestStates.forEachEntry((stop, bag) -> {
-            bestStatesBeforeRound.put(stop, bag.getBestStates());
-            bestNonTransferStatesBeforeRound.put(stop, bag.getNonTransferStates());
+            // Snapshot states from previous round to avoid ConcurrentModificationException
+            // and ensure boarding is based only on states already present at start of round.
+            List<McRaptorState> snapshot = new ArrayList<>();
+            for (McRaptorState s : bag.getBestStates()) {
+                if (s.round == round - 1) snapshot.add(s);
+            }
+            bestStatesBeforeRound.put(stop, snapshot);
 
             // Track this stop for next round's cleanup
             ensureStopCapacity(touchedStopsInRoundSize + 1);
@@ -868,6 +868,7 @@ public class McRaptorSuboptimalPathProfileRouter {
                         back,
                         -1
                 );
+                statePool.returnState(state);
                 return false;
             }
             int boardStop = patt.stops[boardStopPosition];
@@ -886,6 +887,7 @@ public class McRaptorSuboptimalPathProfileRouter {
                         back,
                         boardStop
                 );
+                statePool.returnState(state);
                 return false;
             }
 
@@ -903,6 +905,7 @@ public class McRaptorSuboptimalPathProfileRouter {
                         back,
                         boardStop
                 );
+                statePool.returnState(state);
                 return false;
             }
             if (stop != patt.stops[alightStopPosition]) {
@@ -919,6 +922,7 @@ public class McRaptorSuboptimalPathProfileRouter {
                         back,
                         boardStop
                 );
+                statePool.returnState(state);
                 return false;
             }
         }
@@ -1048,7 +1052,7 @@ public class McRaptorSuboptimalPathProfileRouter {
 
     /** Create a new McRaptorStateBag with properly-configured dominance */
     public McRaptorStateBag createStateBag (int departureTime) {
-        return new McRaptorStateBag(() -> listSupplier.apply(departureTime));
+        return new McRaptorStateBag(() -> listSupplier.apply(departureTime), statePool);
     }
 
     /**
@@ -1173,6 +1177,22 @@ public class McRaptorSuboptimalPathProfileRouter {
             this.egressMode = null;
             this.fare = null;
         }
+
+        /** Copy all fields from another state */
+        public void copyFrom(McRaptorState other) {
+            this.back = other.back;
+            this.time = other.time;
+            this.boardTime = other.boardTime;
+            this.pattern = other.pattern;
+            this.trip = other.trip;
+            this.round = other.round;
+            this.stop = other.stop;
+            this.boardStopPosition = other.boardStopPosition;
+            this.alightStopPosition = other.alightStopPosition;
+            this.accessMode = other.accessMode;
+            this.egressMode = other.egressMode;
+            this.fare = other.fare;
+        }
     }
 
     /** A bag of states which maintains dominance, and also keeps transfer and non-transfer states separately. */
@@ -1186,28 +1206,64 @@ public class McRaptorSuboptimalPathProfileRouter {
          * network.  This is to avoid circumventing the egress walk limit. */
         private DominatingList nonTransfer;
 
-        public McRaptorStateBag(Supplier<DominatingList> factory) {
+        private final McRaptorStatePool statePool;
+
+        public McRaptorStateBag(Supplier<DominatingList> factory, McRaptorStatePool statePool) {
             this.best = factory.get();
             this.nonTransfer = factory.get();
+            this.statePool = statePool;
         }
 
         /** try adding state to the best DominatingList, and to the nonTransfer dominating list if the last step in
          * this state was not a transfer */
         public boolean add (McRaptorState state) {
-            boolean ret = best.add(state);
+            if (state.pattern == -1) {
+                // Transfer state: only goes in 'best'
+                return best.add(state, statePool::returnState);
+            } else {
+                // Transit state: goes in both.
+                // To keep them independent and avoid use-after-free corruption when returning to pool,
+                // we use two separate state objects.
+                McRaptorState copy = statePool.borrow();
+                copy.copyFrom(state);
 
-            // state.pattern == -1 implies this is a transfer
-            if (state.pattern != -1) {
-                if (nonTransfer.add(state)) ret = true;
+                boolean addedToBest = best.add(state, statePool::returnState);
+                boolean addedToNonTransfer = nonTransfer.add(copy, statePool::returnState);
+
+                // Ensure we return any instances that were not retained in either list.
+                if (!addedToNonTransfer) {
+                    statePool.returnState(copy);
+                }
+
+                if (!addedToBest) {
+                    if (addedToNonTransfer) {
+                        // state was not added to 'best', but it was added to 'nonTransfer' (as a copy),
+                        // so the method returns true. The caller will NOT return 'state', so we must.
+                        statePool.returnState(state);
+                    }
+                    // if addedToNonTransfer is also false, the whole method returns false
+                    // and the caller (addState) will return 'state'.
+                }
+
+                return addedToBest || addedToNonTransfer;
             }
-
-            return ret;
         }
 
         public void reset(IntFunction<DominatingList> listSupplier, int departureTime) {
             // Reconfigure existing lists in place for this departure time (no list allocation).
             best.resetForDepartureTime(departureTime);
             nonTransfer.resetForDepartureTime(departureTime);
+        }
+
+        /** Check if this bag's dominating lists are of the same class as the example */
+        public boolean isCompatible(DominatingList example) {
+            return best.getClass().equals(example.getClass());
+        }
+
+        /** Update internal dominating lists with parameters from an example list */
+        public void updateFrom(DominatingList example) {
+            best.updateFrom(example);
+            nonTransfer.updateFrom(example);
         }
 
         public Collection<McRaptorState> getBestStates () {

@@ -1,6 +1,7 @@
 package com.conveyal.r5.profile;
 
 import java.util.Collection;
+import java.util.function.Consumer;
 
 /**
  * When performing a multi-criteria search that finds sets of pareto-optimal paths (which is essential for resource
@@ -20,7 +21,15 @@ import java.util.Collection;
 public interface DominatingList {
     /** Attempt to add a state to this dominating list, and evict dominated states, returning true if this state is
      * undominated */
-    boolean add (McRaptorSuboptimalPathProfileRouter.McRaptorState state);
+    default boolean add (McRaptorSuboptimalPathProfileRouter.McRaptorState state) {
+        return add(state, evicted -> {});
+    }
+
+    /**
+     * Attempt to add a state to this dominating list, and evict dominated states, returning true if this state is
+     * undominated. Any states that are evicted as a result of adding this state will be passed to the evictionCallback.
+     */
+    boolean add (McRaptorSuboptimalPathProfileRouter.McRaptorState state, Consumer<McRaptorSuboptimalPathProfileRouter.McRaptorState> evictionCallback);
 
     /** Reset this list for reuse, clearing all states but keeping allocated capacity */
     void reset();
@@ -31,6 +40,14 @@ public interface DominatingList {
      */
     default void resetForDepartureTime(int departureTime) {
         reset();
+    }
+
+    /**
+     * Update this list's search parameters from another list instance.
+     * Used when reusing pooled lists across requests with different configurations.
+     */
+    default void updateFrom(DominatingList other) {
+        // Default: no parameters to update
     }
 
     /** get non-dominated states at this location */

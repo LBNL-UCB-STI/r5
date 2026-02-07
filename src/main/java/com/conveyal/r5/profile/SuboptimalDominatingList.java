@@ -3,6 +3,7 @@ package com.conveyal.r5.profile;
 import com.conveyal.r5.api.util.LegMode;
 
 import java.util.*;
+import java.util.function.Consumer;
 
 /**
  * An implementation of DominatingList that conserves some sub-optimal states to obtain a wider variety of paths.
@@ -31,15 +32,25 @@ public class SuboptimalDominatingList implements DominatingList {
         // suboptimalSeconds stays the same (it's configuration)
     }
 
-    private void swapAndRemove(int index) {
+    @Override
+    public void updateFrom(DominatingList other) {
+        if (other instanceof SuboptimalDominatingList) {
+            this.suboptimalSeconds = ((SuboptimalDominatingList) other).suboptimalSeconds;
+        }
+    }
+
+    private void swapAndRemove(int index, Consumer<McRaptorSuboptimalPathProfileRouter.McRaptorState> evictionCallback) {
         int lastIdx = states.size() - 1;
+        McRaptorSuboptimalPathProfileRouter.McRaptorState evicted = states.get(index);
         if (index != lastIdx) {
             states.set(index, states.get(lastIdx));
         }
         states.remove(lastIdx);
+        evictionCallback.accept(evicted);
     }
 
-    public boolean add (McRaptorSuboptimalPathProfileRouter.McRaptorState newState) {
+    @Override
+    public boolean add (McRaptorSuboptimalPathProfileRouter.McRaptorState newState, Consumer<McRaptorSuboptimalPathProfileRouter.McRaptorState> evictionCallback) {
         // apply strict dominance if there is a state at the previous round on the same previous pattern arriving at this
         // stop (prevents reboarding/hopping between routes on common trunks)
         // For example, consider the red line in DC, which runs from Shady Grove to Glenmont. At rush hour, every other
@@ -105,10 +116,10 @@ public class SuboptimalDominatingList implements DominatingList {
             // Check if new dominates old
             boolean removed = false;
             if (sameAccessMode && newRound < oldState.round && newTime <= oldState.time) {
-                swapAndRemove(i);// Safe to remove since looping backwards
+                swapAndRemove(i, evictionCallback);// Safe to remove since looping backwards
                 removed = true;
             } else if (newTime + threshold < oldState.time) {
-                swapAndRemove(i);
+                swapAndRemove(i, evictionCallback);
                 removed = true;
             }
 

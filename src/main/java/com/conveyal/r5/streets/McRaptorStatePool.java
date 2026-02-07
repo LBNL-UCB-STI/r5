@@ -64,12 +64,24 @@ public class McRaptorStatePool {
     public McRaptorSuboptimalPathProfileRouter.McRaptorStateBag borrowStateBag(IntFunction<DominatingList> listSupplier, int departureTime) {
         if (nextStateBag < stateBagPool.size()) {
             McRaptorSuboptimalPathProfileRouter.McRaptorStateBag bag = stateBagPool.get(nextStateBag++);
-            bag.reset(listSupplier, departureTime);  // Reset and reconfigure
+            // Check if the existing lists in the bag are compatible with the new supplier.
+            // If the search type changed (e.g. from suboptimal to fare-based), we must re-create the bag
+            // to ensure the correct dominance rules are applied.
+            DominatingList newExample = listSupplier.apply(departureTime);
+            if (bag.isCompatible(newExample)) {
+                bag.reset(listSupplier, departureTime);  // Reset and reconfigure
+                bag.updateFrom(newExample);
+            } else {
+                // Incompatible search type, create a new bag and replace in pool.
+                // This shouldn't happen often if the caller partitions pools by search type.
+                bag = new McRaptorSuboptimalPathProfileRouter.McRaptorStateBag(() -> listSupplier.apply(departureTime), this);
+                stateBagPool.set(nextStateBag - 1, bag);
+            }
             if (nextStateBag > maxStateBagsInUse) maxStateBagsInUse = nextStateBag;
             return bag;
         } else {
             // Pool exhausted, create new
-            McRaptorSuboptimalPathProfileRouter.McRaptorStateBag bag = new McRaptorSuboptimalPathProfileRouter.McRaptorStateBag(() -> listSupplier.apply(departureTime));
+            McRaptorSuboptimalPathProfileRouter.McRaptorStateBag bag = new McRaptorSuboptimalPathProfileRouter.McRaptorStateBag(() -> listSupplier.apply(departureTime), this);
             stateBagPool.add(bag);
             nextStateBag++;
             if (nextStateBag > maxStateBagsInUse) maxStateBagsInUse = nextStateBag;

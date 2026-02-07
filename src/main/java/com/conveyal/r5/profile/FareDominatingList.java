@@ -5,15 +5,16 @@ import com.conveyal.r5.analyst.fare.InRoutingFareCalculator;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.LinkedList;
+import java.util.function.Consumer;
 
 /**
  * An implementation of DominatingList, retaining pareto-optimal paths on time and fare.
  */
 public class FareDominatingList implements DominatingList {
-    private final int maxFare;
+    private int maxFare;
     private int maxClockTime;
-    private final boolean dynamicMaxClockTime;
-    private final int maxTripDurationSeconds;
+    private boolean dynamicMaxClockTime;
+    private int maxTripDurationSeconds;
     private InRoutingFareCalculator fareCalculator;
 
     private LinkedList<McRaptorSuboptimalPathProfileRouter.McRaptorState> states = new LinkedList<>();
@@ -46,6 +47,18 @@ public class FareDominatingList implements DominatingList {
     public void reset() {
         states.clear();  // Clears the list
         // maxFare, maxClockTime, fareCalculator are final config - don't reset
+    }
+
+    @Override
+    public void updateFrom(DominatingList other) {
+        if (other instanceof FareDominatingList) {
+            FareDominatingList fdl = (FareDominatingList) other;
+            this.fareCalculator = fdl.fareCalculator;
+            this.maxFare = fdl.maxFare;
+            this.maxClockTime = fdl.maxClockTime;
+            this.maxTripDurationSeconds = fdl.maxTripDurationSeconds;
+            this.dynamicMaxClockTime = fdl.dynamicMaxClockTime;
+        }
     }
 
     @Override
@@ -86,7 +99,7 @@ public class FareDominatingList implements DominatingList {
     }
 
     @Override
-    public boolean add(McRaptorSuboptimalPathProfileRouter.McRaptorState newState) {
+    public boolean add(McRaptorSuboptimalPathProfileRouter.McRaptorState newState, Consumer<McRaptorSuboptimalPathProfileRouter.McRaptorState> evictionCallback) {
         // if it is past the time limit, drop it
         if (newState.time > maxClockTime) return false;
 
@@ -126,6 +139,7 @@ public class FareDominatingList implements DominatingList {
 
             if (betterOrEqual(newState, existing)) {
                 it.remove();
+                evictionCallback.accept(existing);
             }
         }
 
