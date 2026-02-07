@@ -127,6 +127,27 @@ public class McRaptorStatePool {
                     )
             );
         }
+        int existingOccurrences = countOccurrencesInPool(s);
+        if (existingOccurrences > 0) {
+            throw new IllegalStateException(
+                    String.format(
+                            "Duplicate insertion of McRaptorState into pool array (detected by scan): poolId=%d thread=%s ownerThreadId=%d " +
+                                    "stateId=%d stop=%d round=%d pattern=%d trip=%d time=%d nextAvailable=%d poolSize=%d existingOccurrences=%d",
+                            System.identityHashCode(this),
+                            Thread.currentThread().getName(),
+                            ownerThreadId,
+                            System.identityHashCode(s),
+                            s.stop,
+                            s.round,
+                            s.pattern,
+                            s.trip,
+                            s.time,
+                            nextAvailable,
+                            pool.length,
+                            existingOccurrences
+                    )
+            );
+        }
         if (nextAvailable < pool.length) {
             s.reset();
             pool[nextAvailable++] = s;
@@ -172,6 +193,8 @@ public class McRaptorStatePool {
         for (McRaptorSuboptimalPathProfileRouter.McRaptorState state : pool) {
             state.reset();
         }
+        // Debug safety: ensure pool array itself doesn't contain duplicate references.
+        validateNoDuplicatePoolEntries("reset");
         nextAvailable = pool.length;
         inPoolSet.clear();
         Collections.addAll(inPoolSet, pool);
@@ -214,6 +237,30 @@ public class McRaptorStatePool {
             if (state == target) count++;
         }
         return count;
+    }
+
+    private void validateNoDuplicatePoolEntries(String operation) {
+        IdentityHashMap<McRaptorSuboptimalPathProfileRouter.McRaptorState, Integer> seen = new IdentityHashMap<>();
+        for (int i = 0; i < pool.length; i++) {
+            McRaptorSuboptimalPathProfileRouter.McRaptorState state = pool[i];
+            Integer first = seen.putIfAbsent(state, i);
+            if (first != null) {
+                throw new IllegalStateException(
+                        String.format(
+                                "Duplicate McRaptorState reference already present in pool array: poolId=%d operation=%s " +
+                                        "thread=%s ownerThreadId=%d stateId=%d firstIndex=%d duplicateIndex=%d poolSize=%d",
+                                System.identityHashCode(this),
+                                operation,
+                                Thread.currentThread().getName(),
+                                ownerThreadId,
+                                System.identityHashCode(state),
+                                first,
+                                i,
+                                pool.length
+                        )
+                );
+            }
+        }
     }
 
     // Getters for stats
