@@ -1219,7 +1219,9 @@ public class McRaptorSuboptimalPathProfileRouter {
         public boolean add (McRaptorState state) {
             if (state.pattern == -1) {
                 // Transfer state: only goes in 'best'
-                return best.add(state, statePool::returnState);
+                // Do not recycle evicted states immediately: they may still be referenced
+                // by round snapshots or back-pointers used later in this search.
+                return best.add(state, evicted -> {});
             } else {
                 // Transit state: goes in both.
                 // To keep them independent and avoid use-after-free corruption when returning to pool,
@@ -1227,8 +1229,9 @@ public class McRaptorSuboptimalPathProfileRouter {
                 McRaptorState copy = statePool.borrow();
                 copy.copyFrom(state);
 
-                boolean addedToBest = best.add(state, statePool::returnState);
-                boolean addedToNonTransfer = nonTransfer.add(copy, statePool::returnState);
+                // As above, do not recycle evicted states during the active search.
+                boolean addedToBest = best.add(state, evicted -> {});
+                boolean addedToNonTransfer = nonTransfer.add(copy, evicted -> {});
 
                 // Ensure we return any instances that were not retained in either list.
                 if (!addedToNonTransfer) {
