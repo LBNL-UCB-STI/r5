@@ -39,6 +39,7 @@ public class McRaptorSuboptimalPathProfileRouter {
     
     private static final Logger LOG = LoggerFactory.getLogger(McRaptorSuboptimalPathProfileRouter.class);
     private static final int MAX_BOARD_STOP_MISMATCH_LOGS = 20;
+    private static final int MAX_PREBOARD_STOP_MISMATCH_LOGS = 20;
 
     private final McRaptorStatePool statePool;
 
@@ -99,6 +100,8 @@ public class McRaptorSuboptimalPathProfileRouter {
     private long routeInvocationSequence = 0;
     private long activeRouteInvocationId = 0;
     private int activeDepartureIndex = -1;
+    private int preboardStopMismatchLogs = 0;
+    private boolean preboardStopMismatchSuppressed = false;
 
     public McRaptorSuboptimalPathProfileRouter(
             TransportNetwork network,
@@ -594,6 +597,10 @@ public class McRaptorSuboptimalPathProfileRouter {
                 // get on the bus, if we can
                 if (stopReachedViaDifferentPattern) {
                     for (McRaptorState state : statesAtStopFromPreviousRound) {
+                        if (state.stop != stop) {
+                            logPreboardStopMismatch(stop, stopPositionInPattern, patIdx, state);
+                            continue;
+                        }
                         if (state.round != round - 1) continue;
 
                         if (pattern.hasFrequencies && pattern.hasSchedules) {
@@ -995,6 +1002,45 @@ public class McRaptorSuboptimalPathProfileRouter {
             LOG.error(
                     "Additional board/alight invariant failures suppressed after {} logs for routerId={}",
                     MAX_BOARD_STOP_MISMATCH_LOGS,
+                    System.identityHashCode(this)
+            );
+        }
+    }
+
+    private void logPreboardStopMismatch(
+            int stop,
+            int stopPositionInPattern,
+            int pattern,
+            McRaptorState state
+    ) {
+        if (preboardStopMismatchLogs < MAX_PREBOARD_STOP_MISMATCH_LOGS) {
+            preboardStopMismatchLogs++;
+            LOG.error(
+                    "Pre-board state/stop mismatch: routerId={}, routeInvocationId={}, departureIdx={}, thread={}, " +
+                            "round={}, departureTime={}, pattern={}, stop={}, stopPos={}, stateStop={}, stateRound={}, " +
+                            "statePattern={}, stateTrip={}, stateTime={}, stateAccessMode={}, stateBackStop={}",
+                    System.identityHashCode(this),
+                    activeRouteInvocationId,
+                    activeDepartureIndex,
+                    Thread.currentThread().getName(),
+                    round,
+                    departureTime,
+                    pattern,
+                    stop,
+                    stopPositionInPattern,
+                    state.stop,
+                    state.round,
+                    state.pattern,
+                    state.trip,
+                    state.time,
+                    state.accessMode,
+                    state.back == null ? -1 : state.back.stop
+            );
+        } else if (!preboardStopMismatchSuppressed) {
+            preboardStopMismatchSuppressed = true;
+            LOG.error(
+                    "Additional pre-board state/stop mismatches suppressed after {} logs for routerId={}",
+                    MAX_PREBOARD_STOP_MISMATCH_LOGS,
                     System.identityHashCode(this)
             );
         }

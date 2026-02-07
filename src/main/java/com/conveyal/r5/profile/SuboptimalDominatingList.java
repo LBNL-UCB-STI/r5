@@ -74,6 +74,21 @@ public class SuboptimalDominatingList implements DominatingList {
         while (i >= 0) {
             McRaptorSuboptimalPathProfileRouter.McRaptorState oldState = states.get(i);
 
+            // Fast path: reject exact-equivalent states to prevent pathological duplication.
+            // Duplicates can otherwise accumulate under suboptimal dominance and explode runtime.
+            if (oldState.time == newState.time &&
+                    oldState.round == newState.round &&
+                    oldState.stop == newState.stop &&
+                    oldState.pattern == newState.pattern &&
+                    oldState.trip == newState.trip &&
+                    oldState.boardStopPosition == newState.boardStopPosition &&
+                    oldState.alightStopPosition == newState.alightStopPosition &&
+                    oldState.accessMode == newState.accessMode &&
+                    oldState.egressMode == newState.egressMode &&
+                    oldState.back == newState.back) {
+                return false;
+            }
+
             // Inline dominance check to avoid function call overhead
             boolean sameAccessMode = oldState.accessMode == newAccessMode;
 
