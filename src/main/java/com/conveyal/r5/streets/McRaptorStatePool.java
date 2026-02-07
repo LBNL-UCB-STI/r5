@@ -55,7 +55,7 @@ public class McRaptorStatePool {
             McRaptorSuboptimalPathProfileRouter.McRaptorState state = pool[--nextAvailable];
             inPoolSet.remove(state);
             if (!state.inPool) {
-                int occurrences = countOccurrencesInPool(state);
+                int occurrences = countOccurrencesInAvailablePool(state);
                 throw new IllegalStateException(
                         String.format(
                                 "Borrowed pooled McRaptorState that was not marked in-pool: " +
@@ -127,7 +127,7 @@ public class McRaptorStatePool {
                     )
             );
         }
-        int existingOccurrences = countOccurrencesInPool(s);
+        int existingOccurrences = countOccurrencesInAvailablePool(s);
         if (existingOccurrences > 0) {
             throw new IllegalStateException(
                     String.format(
@@ -231,17 +231,20 @@ public class McRaptorStatePool {
         }
     }
 
-    private int countOccurrencesInPool(McRaptorSuboptimalPathProfileRouter.McRaptorState target) {
+    private int countOccurrencesInAvailablePool(McRaptorSuboptimalPathProfileRouter.McRaptorState target) {
         int count = 0;
-        for (McRaptorSuboptimalPathProfileRouter.McRaptorState state : pool) {
-            if (state == target) count++;
+        // Only the available prefix [0, nextAvailable) is semantically in-pool.
+        // Entries outside this range may still contain stale references from prior borrows.
+        for (int i = 0; i < nextAvailable; i++) {
+            if (pool[i] == target) count++;
         }
         return count;
     }
 
     private void validateNoDuplicatePoolEntries(String operation) {
         IdentityHashMap<McRaptorSuboptimalPathProfileRouter.McRaptorState, Integer> seen = new IdentityHashMap<>();
-        for (int i = 0; i < pool.length; i++) {
+        // Validate only the available prefix [0, nextAvailable).
+        for (int i = 0; i < nextAvailable; i++) {
             McRaptorSuboptimalPathProfileRouter.McRaptorState state = pool[i];
             Integer first = seen.putIfAbsent(state, i);
             if (first != null) {

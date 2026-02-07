@@ -449,7 +449,6 @@ public class McRaptorSuboptimalPathProfileRouter {
                     LOG.debug("Skipping path: missing access/egress times (accessMode={}, egressMode={})",
                             s.accessMode, s.egressMode);
                 }
-                statePool.returnState(s);
                 continue;
             }
             try {
@@ -1304,9 +1303,10 @@ public class McRaptorSuboptimalPathProfileRouter {
                 return best.add(state, evicted -> {});
             } else {
                 // Transit state: goes in both.
-                // To keep them independent and avoid use-after-free corruption when returning to pool,
-                // we use two separate state objects.
-                McRaptorState copy = statePool.borrow();
+                // To keep them independent and avoid pool aliasing/corruption, use a non-pooled copy
+                // for the nonTransfer list entry.
+                McRaptorState copy = new McRaptorState();
+                copy.inPool = false;
                 copy.copyFrom(state);
 
                 // As above, do not recycle evicted states during the active search.
@@ -1314,9 +1314,7 @@ public class McRaptorSuboptimalPathProfileRouter {
                 boolean addedToNonTransfer = nonTransfer.add(copy, evicted -> {});
 
                 // Ensure we return any instances that were not retained in either list.
-                if (!addedToNonTransfer) {
-                    statePool.returnState(copy);
-                }
+                // copy is intentionally non-pooled; let GC reclaim it when not retained.
 
                 if (!addedToBest) {
                     if (addedToNonTransfer) {
