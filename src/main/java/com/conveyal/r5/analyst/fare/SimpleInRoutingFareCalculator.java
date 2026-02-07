@@ -10,6 +10,14 @@ public class SimpleInRoutingFareCalculator extends InRoutingFareCalculator {
 
     @Override
     public FareBounds calculateFare(McRaptorSuboptimalPathProfileRouter.McRaptorState state, int maxClockTime) {
+        // Fast path: simple fares are additive and have no transfer privileges, so when the back-state fare
+        // is already known we can extend it in O(1) instead of walking the entire back-chain.
+        if (state.back != null && state.back.fare != null) {
+            int fareForState = state.back.fare.cumulativeFarePaid;
+            if (state.pattern != -1) fareForState += fare;
+            return new FareBounds(fareForState, new TransferAllowance());
+        }
+
         int fareForState = 0;
 
         while (state != null) {

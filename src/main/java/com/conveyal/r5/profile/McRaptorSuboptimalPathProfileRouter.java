@@ -1107,13 +1107,13 @@ public class McRaptorSuboptimalPathProfileRouter {
                 return best.add(state, evicted -> {});
             } else {
                 // Transit state: goes in both.
-                // To keep them independent and avoid pool aliasing/corruption, use a non-pooled copy
-                // for the nonTransfer list entry.
+                // Add to 'best' first because some DominatingList implementations lazily compute fare there.
+                // Cloning before that would duplicate fare computation in nonTransfer (expensive back-chain walk).
+                boolean addedToBest = best.add(state, evicted -> {});
+
+                // Keep best/nonTransfer entries independent to avoid aliasing corruption when one list evicts.
                 McRaptorState copy = new McRaptorState();
                 copy.copyFrom(state);
-
-                // As above, do not recycle evicted states during the active search.
-                boolean addedToBest = best.add(state, evicted -> {});
                 boolean addedToNonTransfer = nonTransfer.add(copy, evicted -> {});
 
                 // Ensure we return any instances that were not retained in either list.
