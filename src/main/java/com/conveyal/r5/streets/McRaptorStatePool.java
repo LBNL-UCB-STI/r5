@@ -120,7 +120,12 @@ public class McRaptorStatePool {
     }
 
     public void reset() {
-        // Return all states to available
+        // Return all states to available.
+        // Also reset lifecycle bits/fields so debug ownership checks don't
+        // report stale borrowed markers from previous route invocations.
+        for (McRaptorSuboptimalPathProfileRouter.McRaptorState state : pool) {
+            state.reset();
+        }
         nextAvailable = pool.length;
         // Reset StateBag pool
         nextStateBag = 0;
