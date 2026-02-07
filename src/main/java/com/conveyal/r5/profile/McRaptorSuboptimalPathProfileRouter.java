@@ -38,9 +38,6 @@ import java.util.function.Supplier;
 public class McRaptorSuboptimalPathProfileRouter {
     
     private static final Logger LOG = LoggerFactory.getLogger(McRaptorSuboptimalPathProfileRouter.class);
-    private static final int MAX_BOARD_STOP_MISMATCH_LOGS = 20;
-    private static final int MAX_PREBOARD_STOP_MISMATCH_LOGS = 20;
-
     private final McRaptorStatePool statePool;
 
     public static final int BOARD_SLACK = 60;
@@ -94,13 +91,9 @@ public class McRaptorSuboptimalPathProfileRouter {
     private TIntIntMap[] egressTimesArray;
     private int egressArraySize = 0;
     private final AtomicBoolean inUse = new AtomicBoolean(false);
-    private int boardStopMismatchLogs = 0;
-    private boolean boardStopMismatchSuppressed = false;
     private long routeInvocationSequence = 0;
     private long activeRouteInvocationId = 0;
     private int activeDepartureIndex = -1;
-    private int preboardStopMismatchLogs = 0;
-    private boolean preboardStopMismatchSuppressed = false;
 
     public McRaptorSuboptimalPathProfileRouter(
             TransportNetwork network,
@@ -596,29 +589,7 @@ public class McRaptorSuboptimalPathProfileRouter {
                 // get on the bus, if we can
                 if (stopReachedViaDifferentPattern) {
                     for (McRaptorState state : statesAtStopFromPreviousRound) {
-                        if (state.inPool) {
-                            throw new IllegalStateException(
-                                    String.format(
-                                            "Pre-board state was already returned to pool: routerId=%d routeInvocationId=%d departureIdx=%d " +
-                                                    "round=%d departureTime=%d pattern=%d stop=%d stopPos=%d stateStop=%d stateRound=%d statePattern=%d stateTrip=%d stateTime=%d",
-                                            System.identityHashCode(this),
-                                            activeRouteInvocationId,
-                                            activeDepartureIndex,
-                                            round,
-                                            departureTime,
-                                            patIdx,
-                                            stop,
-                                            stopPositionInPattern,
-                                            state.stop,
-                                            state.round,
-                                            state.pattern,
-                                            state.trip,
-                                            state.time
-                                    )
-                            );
-                        }
                         if (state.stop != stop) {
-                            logPreboardStopMismatch(stop, stopPositionInPattern, patIdx, state);
                             continue;
                         }
                         if (state.round != round - 1) continue;
@@ -861,25 +832,6 @@ public class McRaptorSuboptimalPathProfileRouter {
 
         if (back != null && back.time > time)
             throw new IllegalStateException("Attempt to decrement time in state!");
-        if (back != null && back.inPool)
-            throw new IllegalStateException(
-                    String.format(
-                            "Back-pointer state was already returned to pool: routerId=%d routeInvocationId=%d departureIdx=%d " +
-                                    "round=%d departureTime=%d stop=%d backStop=%d backRound=%d backPattern=%d backTrip=%d backTime=%d",
-                            System.identityHashCode(this),
-                            activeRouteInvocationId,
-                            activeDepartureIndex,
-                            round,
-                            departureTime,
-                            stop,
-                            back.stop,
-                            back.round,
-                            back.pattern,
-                            back.trip,
-                            back.time
-                    )
-            );
-
         McRaptorState state = statePool.borrow();
 
         if (back != null) {
@@ -893,73 +845,21 @@ public class McRaptorSuboptimalPathProfileRouter {
         if (boardStopPosition >= 0) {
             TripPattern patt = network.transitLayer.tripPatterns.get(pattern);
             if (boardStopPosition >= patt.stops.length) {
-                logBoardStopMismatch(
-                        "board position out of bounds",
-                        stop,
-                        boardStopPosition,
-                        alightStopPosition,
-                        pattern,
-                        trip,
-                        time,
-                        boardTime,
-                        accessMode,
-                        back,
-                        -1
-                );
                 statePool.returnState(state);
                 return false;
             }
             int boardStop = patt.stops[boardStopPosition];
 
             if (back == null || boardStop != back.stop) {
-                logBoardStopMismatch(
-                        "board stop mismatch",
-                        stop,
-                        boardStopPosition,
-                        alightStopPosition,
-                        pattern,
-                        trip,
-                        time,
-                        boardTime,
-                        accessMode,
-                        back,
-                        boardStop
-                );
                 statePool.returnState(state);
                 return false;
             }
 
             if (alightStopPosition < 0 || alightStopPosition >= patt.stops.length) {
-                logBoardStopMismatch(
-                        "alight position out of bounds",
-                        stop,
-                        boardStopPosition,
-                        alightStopPosition,
-                        pattern,
-                        trip,
-                        time,
-                        boardTime,
-                        accessMode,
-                        back,
-                        boardStop
-                );
                 statePool.returnState(state);
                 return false;
             }
             if (stop != patt.stops[alightStopPosition]) {
-                logBoardStopMismatch(
-                        "alight stop mismatch",
-                        stop,
-                        boardStopPosition,
-                        alightStopPosition,
-                        pattern,
-                        trip,
-                        time,
-                        boardTime,
-                        accessMode,
-                        back,
-                        boardStop
-                );
                 statePool.returnState(state);
                 return false;
             }
@@ -1010,98 +910,6 @@ public class McRaptorSuboptimalPathProfileRouter {
         }
 
         return optimal;
-    }
-
-    private void logBoardStopMismatch(
-            String reason,
-            int stop,
-            int boardStopPosition,
-            int alightStopPosition,
-            int pattern,
-            int trip,
-            int time,
-            int boardTime,
-            LegMode accessMode,
-            McRaptorState back,
-            int boardStop
-    ) {
-        if (boardStopMismatchLogs < MAX_BOARD_STOP_MISMATCH_LOGS) {
-            boardStopMismatchLogs++;
-            LOG.error(
-                    "Board/alight invariant failure: reason={}, routerId={}, routeInvocationId={}, departureIdx={}, " +
-                            "thread={}, round={}, departureTime={}, stop={}, boardStopPos={}, alightStopPos={}, " +
-                            "boardStop={}, pattern={}, trip={}, time={}, boardTime={}, accessMode={}, " +
-                            "backStop={}, backPattern={}, backTrip={}, backTime={}, backRound={}",
-                    reason,
-                    System.identityHashCode(this),
-                    activeRouteInvocationId,
-                    activeDepartureIndex,
-                    Thread.currentThread().getName(),
-                    round,
-                    departureTime,
-                    stop,
-                    boardStopPosition,
-                    alightStopPosition,
-                    boardStop,
-                    pattern,
-                    trip,
-                    time,
-                    boardTime,
-                    accessMode,
-                    back == null ? -1 : back.stop,
-                    back == null ? -1 : back.pattern,
-                    back == null ? -1 : back.trip,
-                    back == null ? -1 : back.time,
-                    back == null ? -1 : back.round
-            );
-        } else if (!boardStopMismatchSuppressed) {
-            boardStopMismatchSuppressed = true;
-            LOG.error(
-                    "Additional board/alight invariant failures suppressed after {} logs for routerId={}",
-                    MAX_BOARD_STOP_MISMATCH_LOGS,
-                    System.identityHashCode(this)
-            );
-        }
-    }
-
-    private void logPreboardStopMismatch(
-            int stop,
-            int stopPositionInPattern,
-            int pattern,
-            McRaptorState state
-    ) {
-        if (preboardStopMismatchLogs < MAX_PREBOARD_STOP_MISMATCH_LOGS) {
-            preboardStopMismatchLogs++;
-            LOG.error(
-                    "Pre-board state/stop mismatch: routerId={}, routeInvocationId={}, departureIdx={}, thread={}, " +
-                            "round={}, departureTime={}, pattern={}, stop={}, stopPos={}, stateStop={}, stateRound={}, " +
-                            "statePattern={}, stateTrip={}, stateTime={}, stateAccessMode={}, stateBackStop={}, stateInPool={}",
-                    System.identityHashCode(this),
-                    activeRouteInvocationId,
-                    activeDepartureIndex,
-                    Thread.currentThread().getName(),
-                    round,
-                    departureTime,
-                    pattern,
-                    stop,
-                    stopPositionInPattern,
-                    state.stop,
-                    state.round,
-                    state.pattern,
-                    state.trip,
-                    state.time,
-                    state.accessMode,
-                    state.back == null ? -1 : state.back.stop,
-                    state.inPool
-            );
-        } else if (!preboardStopMismatchSuppressed) {
-            preboardStopMismatchSuppressed = true;
-            LOG.error(
-                    "Additional pre-board state/stop mismatches suppressed after {} logs for routerId={}",
-                    MAX_PREBOARD_STOP_MISMATCH_LOGS,
-                    System.identityHashCode(this)
-            );
-        }
     }
 
     /** Create a new McRaptorStateBag with properly-configured dominance */
@@ -1158,9 +966,6 @@ public class McRaptorSuboptimalPathProfileRouter {
          * all the time (which can be slow if there are table lookups involved).
          */
         public FareBounds fare;
-        /** True when this object is in the pool and must not be referenced by active search state. */
-        public boolean inPool = true;
-
         public String dump(TransportNetwork network) {
             StringBuilder sb = new StringBuilder();
             sb.append("BEGIN PATH DUMP (reverse chronological order, read up)\n");
@@ -1199,7 +1004,6 @@ public class McRaptorSuboptimalPathProfileRouter {
             this.accessMode = null;
             this.egressMode = null;
             this.fare = null;
-            this.inPool = true;
         }
 
         /** Initialize from another state (for extending paths) */
@@ -1306,7 +1110,6 @@ public class McRaptorSuboptimalPathProfileRouter {
                 // To keep them independent and avoid pool aliasing/corruption, use a non-pooled copy
                 // for the nonTransfer list entry.
                 McRaptorState copy = new McRaptorState();
-                copy.inPool = false;
                 copy.copyFrom(state);
 
                 // As above, do not recycle evicted states during the active search.

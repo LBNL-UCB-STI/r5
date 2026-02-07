@@ -4,16 +4,12 @@ import com.conveyal.r5.profile.DominatingList;
 import com.conveyal.r5.profile.McRaptorSuboptimalPathProfileRouter;
 
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Set;
 import java.util.function.IntFunction;
 
 public class McRaptorStatePool {
     private final McRaptorSuboptimalPathProfileRouter.McRaptorState[] pool;
     private int nextAvailable;
-    private long ownerThreadId = Long.MIN_VALUE;
 
     // Overall stats
     private long borrowCount = 0;
@@ -27,9 +23,6 @@ public class McRaptorStatePool {
     private List<McRaptorSuboptimalPathProfileRouter.McRaptorStateBag> stateBagPool = new ArrayList<>(5000);
     private int nextStateBag = 0;
     private int maxStateBagsInUse = 0;
-    /** Tracks which state instances are currently present in the available segment of the pool array. */
-    private final Set<McRaptorSuboptimalPathProfileRouter.McRaptorState> inPoolSet =
-            Collections.newSetFromMap(new IdentityHashMap<>());
 
     public McRaptorStatePool(int poolSize) {
         this.pool = new McRaptorSuboptimalPathProfileRouter.McRaptorState[poolSize];
@@ -37,13 +30,11 @@ public class McRaptorStatePool {
         // Pre-populate entire pool
         for (int i = 0; i < poolSize; i++) {
             pool[i] = new McRaptorSuboptimalPathProfileRouter.McRaptorState();
-            inPoolSet.add(pool[i]);
         }
         this.nextAvailable = poolSize;
     }
 
     public McRaptorSuboptimalPathProfileRouter.McRaptorState borrow() {
-        assertThreadOwnership("borrow");
         borrowCount++;
         currentlyInUse++;
 
@@ -52,112 +43,25 @@ public class McRaptorStatePool {
         }
 
         if (nextAvailable > 0) {
-            McRaptorSuboptimalPathProfileRouter.McRaptorState state = pool[--nextAvailable];
-            inPoolSet.remove(state);
-            if (!state.inPool) {
-                int occurrences = countOccurrencesInAvailablePool(state);
-                throw new IllegalStateException(
-                        String.format(
-                                "Borrowed pooled McRaptorState that was not marked in-pool: " +
-                                        "poolId=%d thread=%s ownerThreadId=%d nextAvailable=%d poolSize=%d " +
-                                        "stateId=%d stop=%d round=%d pattern=%d trip=%d time=%d occurrencesInPool=%d",
-                                System.identityHashCode(this),
-                                Thread.currentThread().getName(),
-                                ownerThreadId,
-                                nextAvailable,
-                                pool.length,
-                                System.identityHashCode(state),
-                                state.stop,
-                                state.round,
-                                state.pattern,
-                                state.trip,
-                                state.time,
-                                occurrences
-                        )
-                );
-            }
-            state.inPool = false;
-            return state;
+            return pool[--nextAvailable];
         }
 
         // Pool exhausted - allocate non-pooled state
         exhaustionCount++;
         exhaustionsSinceReset++;
-        McRaptorSuboptimalPathProfileRouter.McRaptorState state = new McRaptorSuboptimalPathProfileRouter.McRaptorState();
-        state.inPool = false;
-        return state;
+        return new McRaptorSuboptimalPathProfileRouter.McRaptorState();
     }
 
     public void returnState(McRaptorSuboptimalPathProfileRouter.McRaptorState s) {
-        assertThreadOwnership("returnState");
         currentlyInUse--;
-        if (s.inPool) {
-            throw new IllegalStateException(
-                    String.format(
-                            "Double return of McRaptorState to pool: poolId=%d thread=%s ownerThreadId=%d " +
-                                    "stateId=%d stop=%d round=%d pattern=%d trip=%d time=%d",
-                            System.identityHashCode(this),
-                            Thread.currentThread().getName(),
-                            ownerThreadId,
-                            System.identityHashCode(s),
-                            s.stop,
-                            s.round,
-                            s.pattern,
-                            s.trip,
-                            s.time
-                    )
-            );
-        }
-        if (inPoolSet.contains(s)) {
-            throw new IllegalStateException(
-                    String.format(
-                            "Duplicate insertion of McRaptorState into pool array: poolId=%d thread=%s ownerThreadId=%d " +
-                                    "stateId=%d stop=%d round=%d pattern=%d trip=%d time=%d nextAvailable=%d poolSize=%d",
-                            System.identityHashCode(this),
-                            Thread.currentThread().getName(),
-                            ownerThreadId,
-                            System.identityHashCode(s),
-                            s.stop,
-                            s.round,
-                            s.pattern,
-                            s.trip,
-                            s.time,
-                            nextAvailable,
-                            pool.length
-                    )
-            );
-        }
-        int existingOccurrences = countOccurrencesInAvailablePool(s);
-        if (existingOccurrences > 0) {
-            throw new IllegalStateException(
-                    String.format(
-                            "Duplicate insertion of McRaptorState into pool array (detected by scan): poolId=%d thread=%s ownerThreadId=%d " +
-                                    "stateId=%d stop=%d round=%d pattern=%d trip=%d time=%d nextAvailable=%d poolSize=%d existingOccurrences=%d",
-                            System.identityHashCode(this),
-                            Thread.currentThread().getName(),
-                            ownerThreadId,
-                            System.identityHashCode(s),
-                            s.stop,
-                            s.round,
-                            s.pattern,
-                            s.trip,
-                            s.time,
-                            nextAvailable,
-                            pool.length,
-                            existingOccurrences
-                    )
-            );
-        }
         if (nextAvailable < pool.length) {
             s.reset();
             pool[nextAvailable++] = s;
-            inPoolSet.add(s);
         }
         // Otherwise discard (pool is full or state was non-pooled)
     }
 
     public McRaptorSuboptimalPathProfileRouter.McRaptorStateBag borrowStateBag(IntFunction<DominatingList> listSupplier, int departureTime) {
-        assertThreadOwnership("borrowStateBag");
         if (nextStateBag < stateBagPool.size()) {
             McRaptorSuboptimalPathProfileRouter.McRaptorStateBag bag = stateBagPool.get(nextStateBag++);
             // Check if the existing lists in the bag are compatible with the new supplier.
@@ -186,18 +90,11 @@ public class McRaptorStatePool {
     }
 
     public void reset() {
-        assertThreadOwnership("reset");
         // Return all states to available.
-        // Also reset lifecycle bits/fields so debug ownership checks don't
-        // report stale borrowed markers from previous route invocations.
         for (McRaptorSuboptimalPathProfileRouter.McRaptorState state : pool) {
             state.reset();
         }
-        // Debug safety: ensure pool array itself doesn't contain duplicate references.
-        validateNoDuplicatePoolEntries("reset");
         nextAvailable = pool.length;
-        inPoolSet.clear();
-        Collections.addAll(inPoolSet, pool);
         // Reset StateBag pool
         nextStateBag = 0;
         // Reset per-route counter
@@ -207,63 +104,7 @@ public class McRaptorStatePool {
 
     /** Rewind state-bag borrow cursor without touching the state pool itself. */
     public void resetStateBags() {
-        assertThreadOwnership("resetStateBags");
         nextStateBag = 0;
-    }
-
-    private void assertThreadOwnership(String operation) {
-        long tid = Thread.currentThread().getId();
-        if (ownerThreadId == Long.MIN_VALUE) {
-            ownerThreadId = tid;
-            return;
-        }
-        if (ownerThreadId != tid) {
-            throw new IllegalStateException(
-                    String.format(
-                            "McRaptorStatePool cross-thread access: poolId=%d operation=%s ownerThreadId=%d currentThreadId=%d currentThread=%s",
-                            System.identityHashCode(this),
-                            operation,
-                            ownerThreadId,
-                            tid,
-                            Thread.currentThread().getName()
-                    )
-            );
-        }
-    }
-
-    private int countOccurrencesInAvailablePool(McRaptorSuboptimalPathProfileRouter.McRaptorState target) {
-        int count = 0;
-        // Only the available prefix [0, nextAvailable) is semantically in-pool.
-        // Entries outside this range may still contain stale references from prior borrows.
-        for (int i = 0; i < nextAvailable; i++) {
-            if (pool[i] == target) count++;
-        }
-        return count;
-    }
-
-    private void validateNoDuplicatePoolEntries(String operation) {
-        IdentityHashMap<McRaptorSuboptimalPathProfileRouter.McRaptorState, Integer> seen = new IdentityHashMap<>();
-        // Validate only the available prefix [0, nextAvailable).
-        for (int i = 0; i < nextAvailable; i++) {
-            McRaptorSuboptimalPathProfileRouter.McRaptorState state = pool[i];
-            Integer first = seen.putIfAbsent(state, i);
-            if (first != null) {
-                throw new IllegalStateException(
-                        String.format(
-                                "Duplicate McRaptorState reference already present in pool array: poolId=%d operation=%s " +
-                                        "thread=%s ownerThreadId=%d stateId=%d firstIndex=%d duplicateIndex=%d poolSize=%d",
-                                System.identityHashCode(this),
-                                operation,
-                                Thread.currentThread().getName(),
-                                ownerThreadId,
-                                System.identityHashCode(state),
-                                first,
-                                i,
-                                pool.length
-                        )
-                );
-            }
-        }
     }
 
     // Getters for stats
