@@ -930,7 +930,22 @@ public class McRaptorSuboptimalPathProfileRouter {
         McRaptorStateBag bag = bestStates.get(stop);
         if (bag == null) {
             bag = statePool.borrowStateBag(listSupplier, departureTime);
+            bag.bindToStop(stop);
             bestStates.put(stop, bag);
+        } else if (bag.getOwnerStop() != stop) {
+            throw new IllegalStateException(
+                String.format(
+                    "McRaptorStateBag owner mismatch before add: routerId=%d routeInvocationId=%d departureIdx=%d " +
+                        "round=%d departureTime=%d mapStop=%d bagOwnerStop=%d",
+                    System.identityHashCode(this),
+                    activeRouteInvocationId,
+                    activeDepartureIndex,
+                    round,
+                    departureTime,
+                    stop,
+                    bag.getOwnerStop()
+                )
+            );
         }
         boolean optimal = bag.add(state);
 
@@ -1207,6 +1222,7 @@ public class McRaptorSuboptimalPathProfileRouter {
         private DominatingList nonTransfer;
 
         private final McRaptorStatePool statePool;
+        private int ownerStop = Integer.MIN_VALUE;
 
         public McRaptorStateBag(Supplier<DominatingList> factory, McRaptorStatePool statePool) {
             this.best = factory.get();
@@ -1214,9 +1230,30 @@ public class McRaptorSuboptimalPathProfileRouter {
             this.statePool = statePool;
         }
 
+        public void bindToStop(int stop) {
+            this.ownerStop = stop;
+        }
+
+        public int getOwnerStop() {
+            return ownerStop;
+        }
+
         /** try adding state to the best DominatingList, and to the nonTransfer dominating list if the last step in
          * this state was not a transfer */
         public boolean add (McRaptorState state) {
+            if (ownerStop != Integer.MIN_VALUE && state.stop != ownerStop) {
+                throw new IllegalStateException(
+                    String.format(
+                        "McRaptorStateBag cross-stop insert: ownerStop=%d stateStop=%d stateRound=%d statePattern=%d stateTrip=%d stateTime=%d",
+                        ownerStop,
+                        state.stop,
+                        state.round,
+                        state.pattern,
+                        state.trip,
+                        state.time
+                    )
+                );
+            }
             if (state.pattern == -1) {
                 // Transfer state: only goes in 'best'
                 // Do not recycle evicted states immediately: they may still be referenced
@@ -1256,6 +1293,7 @@ public class McRaptorSuboptimalPathProfileRouter {
             // Reconfigure existing lists in place for this departure time (no list allocation).
             best.resetForDepartureTime(departureTime);
             nonTransfer.resetForDepartureTime(departureTime);
+            ownerStop = Integer.MIN_VALUE;
         }
 
         /** Check if this bag's dominating lists are of the same class as the example */
