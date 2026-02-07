@@ -11,10 +11,14 @@ import gnu.trove.map.TIntIntMap;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.lang.reflect.Field;
 import java.util.*;
 import java.util.stream.Collectors;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.fail;
 import static org.junit.Assert.assertTrue;
 
 public class SuboptimalProfileRouterTest {
@@ -195,5 +199,161 @@ public class SuboptimalProfileRouterTest {
 
         assertEquals(freshPaths.size(), pooledPathsAfterReset.size());
         assertEquals(freshRouteIds, pooledRouteIds);
+    }
+
+    @Test
+    public void testRouterPoolingStressProducesStructurallyValidPaths() {
+        ProfileRequest request = new ProfileRequest();
+        request.fromLat = 40.02183;
+        request.fromLon = -83.0889;
+        request.toLat = 39.9622;
+        request.toLon = -83.0007;
+        request.suboptimalMinutes = 2;
+        request.monteCarloDraws = 0;
+        request.date = java.time.LocalDate.of(2025, 10, 17);
+        request.fromTime = 7 * 3600;
+        request.toTime = 8 * 3600;
+        request.transitModes = EnumSet.allOf(TransitModes.class);
+        request.accessModes = EnumSet.of(LegMode.WALK);
+        request.egressModes = EnumSet.of(LegMode.WALK);
+
+        StreetRouter accessRouter = new StreetRouter(network.streetLayer);
+        accessRouter.streetMode = StreetMode.WALK;
+        accessRouter.profileRequest = request;
+        accessRouter.timeLimitSeconds = 120 * 60;
+        accessRouter.transitStopSearch = true;
+        accessRouter.setOrigin(request.fromLat, request.fromLon);
+        accessRouter.route();
+        TIntIntMap walkAccessTimes = accessRouter.getReachedStops();
+
+        request.reverseSearch = true;
+        StreetRouter egressRouter = new StreetRouter(network.streetLayer);
+        egressRouter.streetMode = StreetMode.WALK;
+        egressRouter.profileRequest = request;
+        egressRouter.timeLimitSeconds = 120 * 60;
+        egressRouter.transitStopSearch = true;
+        egressRouter.setOrigin(request.toLat, request.toLon);
+        egressRouter.route();
+        TIntIntMap walkEgressTimes = egressRouter.getReachedStops();
+        request.reverseSearch = false;
+
+        Map<LegMode, TIntIntMap> access = new LinkedHashMap<>();
+        access.put(LegMode.WALK, walkAccessTimes);
+        Map<LegMode, TIntIntMap> egress = new LinkedHashMap<>();
+        egress.put(LegMode.WALK, walkEgressTimes);
+
+        McRaptorSuboptimalPathProfileRouter pooledRouter = new McRaptorSuboptimalPathProfileRouter(
+                network,
+                request,
+                access,
+                egress,
+                (t) -> new SuboptimalDominatingList(request.suboptimalMinutes),
+                null,
+                new McRaptorStatePool(50000)
+        );
+
+        // Repeatedly reset and reroute to stress pooled internal structures.
+        for (int i = 0; i < 250; i++) {
+            pooledRouter.reset(
+                    request,
+                    access,
+                    egress,
+                    (t) -> new SuboptimalDominatingList(request.suboptimalMinutes),
+                    null
+            );
+            Collection<PathWithTimes> paths = pooledRouter.getPaths();
+            assertTrue("Expected at least one path at iteration " + i, paths.size() > 0);
+            assertAllPathLegIndicesConsistent(paths);
+        }
+    }
+
+    @Test
+    public void testResetFailsFastWhenRouterIsMarkedInUse() throws Exception {
+        ProfileRequest request = new ProfileRequest();
+        request.fromLat = 40.02183;
+        request.fromLon = -83.0889;
+        request.toLat = 39.9622;
+        request.toLon = -83.0007;
+        request.suboptimalMinutes = 2;
+        request.monteCarloDraws = 0;
+        request.accessModes = request.egressModes = EnumSet.of(LegMode.WALK);
+        request.date = java.time.LocalDate.of(2025, 10, 17);
+        request.fromTime = 7 * 3600;
+        request.toTime = 8 * 3600;
+        request.transitModes = EnumSet.allOf(TransitModes.class);
+
+        StreetRouter accessRouter = new StreetRouter(network.streetLayer);
+        accessRouter.streetMode = StreetMode.WALK;
+        accessRouter.profileRequest = request;
+        accessRouter.timeLimitSeconds = 120 * 60;
+        accessRouter.transitStopSearch = true;
+        accessRouter.setOrigin(request.fromLat, request.fromLon);
+        accessRouter.route();
+        TIntIntMap accessTimes = accessRouter.getReachedStops();
+        Map<LegMode, TIntIntMap> accessByMode = new HashMap<>();
+        accessByMode.put(LegMode.WALK, accessTimes);
+
+        request.reverseSearch = true;
+        StreetRouter egressRouter = new StreetRouter(network.streetLayer);
+        egressRouter.streetMode = StreetMode.WALK;
+        egressRouter.profileRequest = request;
+        egressRouter.timeLimitSeconds = 120 * 60;
+        egressRouter.transitStopSearch = true;
+        egressRouter.setOrigin(request.toLat, request.toLon);
+        egressRouter.route();
+        TIntIntMap egressTimes = egressRouter.getReachedStops();
+        Map<LegMode, TIntIntMap> egressByMode = new HashMap<>();
+        egressByMode.put(LegMode.WALK, egressTimes);
+        request.reverseSearch = false;
+
+        McRaptorSuboptimalPathProfileRouter router = new McRaptorSuboptimalPathProfileRouter(
+                network,
+                request,
+                accessByMode,
+                egressByMode,
+                (t) -> new SuboptimalDominatingList(request.suboptimalMinutes),
+                null,
+                new McRaptorStatePool(50000)
+        );
+
+        Field inUseField = McRaptorSuboptimalPathProfileRouter.class.getDeclaredField("inUse");
+        inUseField.setAccessible(true);
+        AtomicBoolean inUse = (AtomicBoolean) inUseField.get(router);
+        assertNotNull(inUse);
+        inUse.set(true);
+
+        IllegalStateException ex;
+        try {
+            router.reset(
+                    request,
+                    accessByMode,
+                    egressByMode,
+                    (t) -> new SuboptimalDominatingList(request.suboptimalMinutes),
+                    null
+            );
+            fail("Expected IllegalStateException when resetting router while in use");
+            return;
+        } catch (IllegalStateException e) {
+            ex = e;
+        }
+        assertTrue(ex.getMessage().contains("not thread-safe"));
+    }
+
+    private void assertAllPathLegIndicesConsistent(Collection<PathWithTimes> paths) {
+        for (PathWithTimes path : paths) {
+            for (int i = 0; i < path.patterns.length; i++) {
+                int patternIdx = path.patterns[i];
+                int boardPos = path.boardStopPositions[i];
+                int alightPos = path.alightStopPositions[i];
+
+                int[] stops = network.transitLayer.tripPatterns.get(patternIdx).stops;
+                assertTrue(boardPos >= 0);
+                assertTrue(alightPos >= 0);
+                assertTrue(boardPos < stops.length);
+                assertTrue(alightPos < stops.length);
+                assertEquals(path.boardStops[i], stops[boardPos]);
+                assertEquals(path.alightStops[i], stops[alightPos]);
+            }
+        }
     }
 }

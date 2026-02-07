@@ -24,6 +24,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.IntFunction;
 import java.util.function.Supplier;
 
@@ -91,6 +92,7 @@ public class McRaptorSuboptimalPathProfileRouter {
     private LegMode[] egressModesArray;
     private TIntIntMap[] egressTimesArray;
     private int egressArraySize = 0;
+    private final AtomicBoolean inUse = new AtomicBoolean(false);
 
     public McRaptorSuboptimalPathProfileRouter(
             TransportNetwork network,
@@ -150,6 +152,13 @@ public class McRaptorSuboptimalPathProfileRouter {
             IntFunction<DominatingList> listSupplier,
             InRoutingFareCalculator.Collater collapseParetoSurfaceToTime
     ) {
+        if (inUse.get()) {
+            throw new IllegalStateException(
+                    "McRaptorSuboptimalPathProfileRouter.reset called while router is in use. " +
+                            "Router instances are not thread-safe and must not be reused concurrently."
+            );
+        }
+
         // Update parameters
         this.request = req;
         this.accessTimes = accessTimes;
@@ -231,130 +240,140 @@ public class McRaptorSuboptimalPathProfileRouter {
 
     /** Get a McRAPTOR state bag for every departure minute */
     public Collection<McRaptorState> route () {
+        if (!inUse.compareAndSet(false, true)) {
+            throw new IllegalStateException(
+                    "McRaptorSuboptimalPathProfileRouter is already in use. " +
+                            "Router instances are not thread-safe and must not be reused concurrently."
+            );
+        }
 
-        // Modeify does its own pre-computation of accessTimes, but Analysis does not
-        if (accessTimes == null) computeAccessTimes();
+        try {
+            // Modeify does its own pre-computation of accessTimes, but Analysis does not
+            if (accessTimes == null) computeAccessTimes();
 
-        // Reset pool once per route. For multi-departure sampling, pooled states can still be referenced
-        // across samples (e.g., destination states), so do not reset between departures unless results
-        // are fully consumed or destination states are copied/non-pooled.
-        statePool.reset();
+            // Reset pool once per route. For multi-departure sampling, pooled states can still be referenced
+            // across samples (e.g., destination states), so do not reset between departures unless results
+            // are fully consumed or destination states are copied/non-pooled.
+            statePool.reset();
 
-        long startTime = System.currentTimeMillis();
+            long startTime = System.currentTimeMillis();
 
-        // Optimization for modeify (PointToPointQuery): find patterns near destination
-        // on the final round of the search we only explore these patterns
-        if (this.egressTimes != null) {
-            this.egressTimes.values().forEach(times -> times.forEachKey(s -> {
-                network.transitLayer.patternsForStop.get(s).forEach(p -> {
-                    patternsNearDestination.set(p);
+            // Optimization for modeify (PointToPointQuery): find patterns near destination
+            // on the final round of the search we only explore these patterns
+            if (this.egressTimes != null) {
+                this.egressTimes.values().forEach(times -> times.forEachKey(s -> {
+                    network.transitLayer.patternsForStop.get(s).forEach(p -> {
+                        patternsNearDestination.set(p);
+                        return true;
+                    });
                     return true;
-                });
-                return true;
-            }));
-            if (LOG.isDebugEnabled()) {
-                LOG.debug("{} patterns found near the destination", patternsNearDestination.cardinality());
-            }
-        }
-
-        List<McRaptorState> codominatingStatesToBeReturned = new ArrayList<>();
-
-        // We start at end of time window and work backwards (which is what range-RAPTOR does, in case we
-        // re-implement that here). We use a constrained random walk to choose which departure minutes to sample as we
-        // work backward through the time window.  According to others (Owen and Jiang?), this is a good way to reduce
-        // the number of samples without causing an issue with variance in results.  This value is the constraint
-        // (upper limit) on the walk.
-        // multiply by two because E[random] = 1/2 * max.
-        if (request.monteCarloDraws == 200) {
-            // 200 draws will take a really long time and is probably not what is desired. It is more likely the user simply
-            // forgot to change the number of draws in the
-            throw new IllegalArgumentException("Monte Carlo draws set to UI default, this is probably not what you want, exiting. " +
-                    "Each draw in the fare-based router can be quite slow, so you probably want a smaller number. " +
-                    "If you _really_ want 200 draws, maybe you'd be happy with 199 or 201, which will prevent " +
-                    "this error?");
-        }
-
-        if (request.monteCarloDraws != 0) {
-            LOG.warn("BEAM fork requires monteCarloDraws=0, got {}", request.monteCarloDraws);
-            throw new IllegalArgumentException("BEAM fork requires monteCarloDraws=0");
-        }
-
-        ArrayList<Integer> departureTimes = generateDepartureTimesToSample(request);
-
-        // Only enforce exact count for Monte Carlo mode
-        // In deterministic mode (monteCarloDraws == 0), use whatever was generated
-        if (request.monteCarloDraws > 0) {
-            while (departureTimes.size() != request.monteCarloDraws) {
-                departureTimes = generateDepartureTimesToSample(request);
-            }
-        }
-
-        for (int n = 0; n < departureTimes.size(); n++) {
-            departureTime = departureTimes.get(n);
-
-            // we're not using range-raptor so it's safe to change the schedule on each search
-            if (request.monteCarloDraws > 0) {
-                offsets.randomize();
-            }
-
-            bestStates.clear();
-            // Reuse existing state bags across departures in the same route invocation.
-            statePool.resetStateBags();
-            touchedPatterns.clear();
-            touchedStops.clear();
-            // Round 0 is in essence non-transit access.
-            round = 0;
-            // final to allow use in the lambda function below
-            final int finalDepartureTime = departureTime;
-
-            // enqueue/relax access times, which are seconds of travel time (not clock time) by mode from the origin
-            // to nearby stops
-            for (Map.Entry<LegMode, TIntIntMap> entry : accessTimes.entrySet()) {
-                LegMode mode = entry.getKey();
-                TIntIntMap times = entry.getValue();
-
-                TIntIntIterator it = times.iterator();
-                while (it.hasNext()) {
-                    it.advance();
-                    int stop = it.key();
-                    int accessTime = it.value();
-                    if (addState(stop, -1, -1, finalDepartureTime + accessTime, -1, -1, -1, null, mode))
-                        touchedStops.set(stop);
+                }));
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("{} patterns found near the destination", patternsNearDestination.cardinality());
                 }
             }
 
-            markPatterns();
+            List<McRaptorState> codominatingStatesToBeReturned = new ArrayList<>();
 
-            round++;
-
-            // NB the walk search is an initial round, so MAX_ROUNDS + 1
-            while (doOneRound() && round < request.maxRides + 1);
-
-            for (int i = 0; i < touchedStopsLastRoundSize; i++) {
-                int stop = touchedStopsLastRound[i];
-                bestStatesBeforeRound.remove(stop);
-                bestNonTransferStatesBeforeRound.remove(stop);
+            // We start at end of time window and work backwards (which is what range-RAPTOR does, in case we
+            // re-implement that here). We use a constrained random walk to choose which departure minutes to sample as we
+            // work backward through the time window.  According to others (Owen and Jiang?), this is a good way to reduce
+            // the number of samples without causing an issue with variance in results.  This value is the constraint
+            // (upper limit) on the walk.
+            // multiply by two because E[random] = 1/2 * max.
+            if (request.monteCarloDraws == 200) {
+                // 200 draws will take a really long time and is probably not what is desired. It is more likely the user simply
+                // forgot to change the number of draws in the
+                throw new IllegalArgumentException("Monte Carlo draws set to UI default, this is probably not what you want, exiting. " +
+                        "Each draw in the fare-based router can be quite slow, so you probably want a smaller number. " +
+                        "If you _really_ want 200 draws, maybe you'd be happy with 199 or 201, which will prevent " +
+                        "this error?");
             }
 
-            // TODO this means we wind up with some duplicated states.
-            if (egressTimes != null) {
-                // In a PointToPointQuery (for Modeify), egressTimes will already be computed
-                codominatingStatesToBeReturned.addAll(doPropagationToDestination(finalDepartureTime));
+            if (request.monteCarloDraws != 0) {
+                LOG.warn("BEAM fork requires monteCarloDraws=0, got {}", request.monteCarloDraws);
+                throw new IllegalArgumentException("BEAM fork requires monteCarloDraws=0");
             }
-            if (collapseParetoSurfaceToTime != null) {
-                collateTravelTimes(departureTime);
+
+            ArrayList<Integer> departureTimes = generateDepartureTimesToSample(request);
+
+            // Only enforce exact count for Monte Carlo mode
+            // In deterministic mode (monteCarloDraws == 0), use whatever was generated
+            if (request.monteCarloDraws > 0) {
+                while (departureTimes.size() != request.monteCarloDraws) {
+                    departureTimes = generateDepartureTimesToSample(request);
+                }
             }
-            if (LOG.isDebugEnabled()) {
-                LOG.debug("minute {} / {}", n + 1, departureTimes.size());
+
+            for (int n = 0; n < departureTimes.size(); n++) {
+                departureTime = departureTimes.get(n);
+
+                // we're not using range-raptor so it's safe to change the schedule on each search
+                if (request.monteCarloDraws > 0) {
+                    offsets.randomize();
+                }
+
+                bestStates.clear();
+                // Reuse existing state bags across departures in the same route invocation.
+                statePool.resetStateBags();
+                touchedPatterns.clear();
+                touchedStops.clear();
+                // Round 0 is in essence non-transit access.
+                round = 0;
+                // final to allow use in the lambda function below
+                final int finalDepartureTime = departureTime;
+
+                // enqueue/relax access times, which are seconds of travel time (not clock time) by mode from the origin
+                // to nearby stops
+                for (Map.Entry<LegMode, TIntIntMap> entry : accessTimes.entrySet()) {
+                    LegMode mode = entry.getKey();
+                    TIntIntMap times = entry.getValue();
+
+                    TIntIntIterator it = times.iterator();
+                    while (it.hasNext()) {
+                        it.advance();
+                        int stop = it.key();
+                        int accessTime = it.value();
+                        if (addState(stop, -1, -1, finalDepartureTime + accessTime, -1, -1, -1, null, mode))
+                            touchedStops.set(stop);
+                    }
+                }
+
+                markPatterns();
+
+                round++;
+
+                // NB the walk search is an initial round, so MAX_ROUNDS + 1
+                while (doOneRound() && round < request.maxRides + 1);
+
+                for (int i = 0; i < touchedStopsLastRoundSize; i++) {
+                    int stop = touchedStopsLastRound[i];
+                    bestStatesBeforeRound.remove(stop);
+                    bestNonTransferStatesBeforeRound.remove(stop);
+                }
+
+                // TODO this means we wind up with some duplicated states.
+                if (egressTimes != null) {
+                    // In a PointToPointQuery (for Modeify), egressTimes will already be computed
+                    codominatingStatesToBeReturned.addAll(doPropagationToDestination(finalDepartureTime));
+                }
+                if (collapseParetoSurfaceToTime != null) {
+                    collateTravelTimes(departureTime);
+                }
+                if (LOG.isDebugEnabled()) {
+                    LOG.debug("minute {} / {}", n + 1, departureTimes.size());
+                }
             }
+
+            if (LOG.isInfoEnabled()) {
+                LOG.info("McRAPTOR took {}ms", System.currentTimeMillis() - startTime);
+            }
+
+            // will be empty unless this is for a PointToPointQuery.
+            return codominatingStatesToBeReturned;
+        } finally {
+            inUse.set(false);
         }
-
-        if (LOG.isInfoEnabled()) {
-            LOG.info("McRAPTOR took {}ms", System.currentTimeMillis() - startTime);
-        }
-
-        // will be empty unless this is for a PointToPointQuery.
-        return codominatingStatesToBeReturned;
     }
 
     /** compute access times based on the profile request. NB this does not do a search-per-mode */
