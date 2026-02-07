@@ -597,6 +597,27 @@ public class McRaptorSuboptimalPathProfileRouter {
                 // get on the bus, if we can
                 if (stopReachedViaDifferentPattern) {
                     for (McRaptorState state : statesAtStopFromPreviousRound) {
+                        if (state.inPool) {
+                            throw new IllegalStateException(
+                                    String.format(
+                                            "Pre-board state was already returned to pool: routerId=%d routeInvocationId=%d departureIdx=%d " +
+                                                    "round=%d departureTime=%d pattern=%d stop=%d stopPos=%d stateStop=%d stateRound=%d statePattern=%d stateTrip=%d stateTime=%d",
+                                            System.identityHashCode(this),
+                                            activeRouteInvocationId,
+                                            activeDepartureIndex,
+                                            round,
+                                            departureTime,
+                                            patIdx,
+                                            stop,
+                                            stopPositionInPattern,
+                                            state.stop,
+                                            state.round,
+                                            state.pattern,
+                                            state.trip,
+                                            state.time
+                                    )
+                            );
+                        }
                         if (state.stop != stop) {
                             logPreboardStopMismatch(stop, stopPositionInPattern, patIdx, state);
                             continue;
@@ -841,6 +862,24 @@ public class McRaptorSuboptimalPathProfileRouter {
 
         if (back != null && back.time > time)
             throw new IllegalStateException("Attempt to decrement time in state!");
+        if (back != null && back.inPool)
+            throw new IllegalStateException(
+                    String.format(
+                            "Back-pointer state was already returned to pool: routerId=%d routeInvocationId=%d departureIdx=%d " +
+                                    "round=%d departureTime=%d stop=%d backStop=%d backRound=%d backPattern=%d backTrip=%d backTime=%d",
+                            System.identityHashCode(this),
+                            activeRouteInvocationId,
+                            activeDepartureIndex,
+                            round,
+                            departureTime,
+                            stop,
+                            back.stop,
+                            back.round,
+                            back.pattern,
+                            back.trip,
+                            back.time
+                    )
+            );
 
         McRaptorState state = statePool.borrow();
 
@@ -1037,7 +1076,7 @@ public class McRaptorSuboptimalPathProfileRouter {
             LOG.error(
                     "Pre-board state/stop mismatch: routerId={}, routeInvocationId={}, departureIdx={}, thread={}, " +
                             "round={}, departureTime={}, pattern={}, stop={}, stopPos={}, stateStop={}, stateRound={}, " +
-                            "statePattern={}, stateTrip={}, stateTime={}, stateAccessMode={}, stateBackStop={}",
+                            "statePattern={}, stateTrip={}, stateTime={}, stateAccessMode={}, stateBackStop={}, stateInPool={}",
                     System.identityHashCode(this),
                     activeRouteInvocationId,
                     activeDepartureIndex,
@@ -1053,7 +1092,8 @@ public class McRaptorSuboptimalPathProfileRouter {
                     state.trip,
                     state.time,
                     state.accessMode,
-                    state.back == null ? -1 : state.back.stop
+                    state.back == null ? -1 : state.back.stop,
+                    state.inPool
             );
         } else if (!preboardStopMismatchSuppressed) {
             preboardStopMismatchSuppressed = true;
@@ -1119,6 +1159,8 @@ public class McRaptorSuboptimalPathProfileRouter {
          * all the time (which can be slow if there are table lookups involved).
          */
         public FareBounds fare;
+        /** True when this object is in the pool and must not be referenced by active search state. */
+        public boolean inPool = true;
 
         public String dump(TransportNetwork network) {
             StringBuilder sb = new StringBuilder();
@@ -1158,6 +1200,7 @@ public class McRaptorSuboptimalPathProfileRouter {
             this.accessMode = null;
             this.egressMode = null;
             this.fare = null;
+            this.inPool = true;
         }
 
         /** Initialize from another state (for extending paths) */

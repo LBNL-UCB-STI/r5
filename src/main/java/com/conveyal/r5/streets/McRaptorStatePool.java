@@ -43,17 +43,47 @@ public class McRaptorStatePool {
         }
 
         if (nextAvailable > 0) {
-            return pool[--nextAvailable];
+            McRaptorSuboptimalPathProfileRouter.McRaptorState state = pool[--nextAvailable];
+            if (!state.inPool) {
+                throw new IllegalStateException(
+                        String.format(
+                                "Borrowed pooled McRaptorState that was not marked in-pool: id=%d stop=%d round=%d pattern=%d trip=%d time=%d",
+                                System.identityHashCode(state),
+                                state.stop,
+                                state.round,
+                                state.pattern,
+                                state.trip,
+                                state.time
+                        )
+                );
+            }
+            state.inPool = false;
+            return state;
         }
 
         // Pool exhausted - allocate non-pooled state
         exhaustionCount++;
         exhaustionsSinceReset++;
-        return new McRaptorSuboptimalPathProfileRouter.McRaptorState();
+        McRaptorSuboptimalPathProfileRouter.McRaptorState state = new McRaptorSuboptimalPathProfileRouter.McRaptorState();
+        state.inPool = false;
+        return state;
     }
 
     public void returnState(McRaptorSuboptimalPathProfileRouter.McRaptorState s) {
         currentlyInUse--;
+        if (s.inPool) {
+            throw new IllegalStateException(
+                    String.format(
+                            "Double return of McRaptorState to pool: id=%d stop=%d round=%d pattern=%d trip=%d time=%d",
+                            System.identityHashCode(s),
+                            s.stop,
+                            s.round,
+                            s.pattern,
+                            s.trip,
+                            s.time
+                    )
+            );
+        }
         if (nextAvailable < pool.length) {
             s.reset();
             pool[nextAvailable++] = s;
