@@ -1057,7 +1057,7 @@ public class StreetLayer implements Serializable, Cloneable {
 
         // Skip self-loops created by collapsed or duplicated OSM nodes.
         if (beginVertexIndex == endVertexIndex) {
-            LOG.error("Skipping self-loop edge from OSM way {} (nodes {} -> {} both map to vertex {}). " +
+            LOG.warn("Skipping self-loop edge from OSM way {} (nodes {} -> {} both map to vertex {}). " +
                             "Length tag claims {}m but edge has zero geometric length. " +
                             "This is corrupt OSM data - likely from OSMnx bug or manual edit error.",
                     osmID, beginOsmNodeId, endOsmNodeId, beginVertexIndex,

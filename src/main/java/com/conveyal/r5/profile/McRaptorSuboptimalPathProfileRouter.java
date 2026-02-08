@@ -375,8 +375,8 @@ public class McRaptorSuboptimalPathProfileRouter {
                 }
             }
 
-            if (LOG.isInfoEnabled()) {
-                LOG.info("McRAPTOR took {}ms", System.currentTimeMillis() - startTime);
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("McRAPTOR took {}ms", System.currentTimeMillis() - startTime);
             }
 
             // will be empty unless this is for a PointToPointQuery.
@@ -877,18 +877,22 @@ public class McRaptorSuboptimalPathProfileRouter {
         if (boardStopPosition >= 0) {
             TripPattern patt = network.transitLayer.tripPatterns.get(pattern);
             if (boardStopPosition >= patt.stops.length) {
+                if (stateFromPool) statePool.returnState(state);
                 return false;
             }
             int boardStop = patt.stops[boardStopPosition];
 
             if (back == null || boardStop != back.stop) {
+                if (stateFromPool) statePool.returnState(state);
                 return false;
             }
 
             if (alightStopPosition < 0 || alightStopPosition >= patt.stops.length) {
+                if (stateFromPool) statePool.returnState(state);
                 return false;
             }
             if (stop != patt.stops[alightStopPosition]) {
+                if (stateFromPool) statePool.returnState(state);
                 return false;
             }
         }
@@ -944,7 +948,7 @@ public class McRaptorSuboptimalPathProfileRouter {
 
     /** Create a new McRaptorStateBag with properly-configured dominance */
     public McRaptorStateBag createStateBag (int departureTime) {
-        return new McRaptorStateBag(() -> listSupplier.apply(departureTime), statePool);
+        return new McRaptorStateBag(() -> listSupplier.apply(departureTime));
     }
 
     /**
@@ -1097,13 +1101,11 @@ public class McRaptorSuboptimalPathProfileRouter {
          * network.  This is to avoid circumventing the egress walk limit. */
         private DominatingList nonTransfer;
 
-        private final McRaptorStatePool statePool;
         private int ownerStop = Integer.MIN_VALUE;
 
-        public McRaptorStateBag(Supplier<DominatingList> factory, McRaptorStatePool statePool) {
+        public McRaptorStateBag(Supplier<DominatingList> factory) {
             this.best = factory.get();
             this.nonTransfer = factory.get();
-            this.statePool = statePool;
         }
 
         public void bindToStop(int stop) {
@@ -1155,7 +1157,7 @@ public class McRaptorSuboptimalPathProfileRouter {
             }
         }
 
-        public void reset(IntFunction<DominatingList> listSupplier, int departureTime) {
+        public void reset(int departureTime) {
             // Reconfigure existing lists in place for this departure time (no list allocation).
             best.resetForDepartureTime(departureTime);
             nonTransfer.resetForDepartureTime(departureTime);

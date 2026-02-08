@@ -69,19 +69,19 @@ public class McRaptorStatePool {
             // to ensure the correct dominance rules are applied.
             DominatingList newExample = listSupplier.apply(departureTime);
             if (bag.isCompatible(newExample)) {
-                bag.reset(listSupplier, departureTime);  // Reset and reconfigure
+                bag.reset(departureTime);  // Reset and reconfigure
                 bag.updateFrom(newExample);
             } else {
                 // Incompatible search type, create a new bag and replace in pool.
                 // This shouldn't happen often if the caller partitions pools by search type.
-                bag = new McRaptorSuboptimalPathProfileRouter.McRaptorStateBag(() -> listSupplier.apply(departureTime), this);
+                bag = new McRaptorSuboptimalPathProfileRouter.McRaptorStateBag(() -> listSupplier.apply(departureTime));
                 stateBagPool.set(nextStateBag - 1, bag);
             }
             if (nextStateBag > maxStateBagsInUse) maxStateBagsInUse = nextStateBag;
             return bag;
         } else {
             // Pool exhausted, create new
-            McRaptorSuboptimalPathProfileRouter.McRaptorStateBag bag = new McRaptorSuboptimalPathProfileRouter.McRaptorStateBag(() -> listSupplier.apply(departureTime), this);
+            McRaptorSuboptimalPathProfileRouter.McRaptorStateBag bag = new McRaptorSuboptimalPathProfileRouter.McRaptorStateBag(() -> listSupplier.apply(departureTime));
             stateBagPool.add(bag);
             nextStateBag++;
             if (nextStateBag > maxStateBagsInUse) maxStateBagsInUse = nextStateBag;
