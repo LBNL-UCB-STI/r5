@@ -322,10 +322,13 @@ public class McRaptorSuboptimalPathProfileRouter {
                 }
 
                 bestStates.clear();
+                // Ensure no stale per-round snapshots survive across sampled departures.
+                bestStatesBeforeRound.clear();
                 // Reuse existing state bags across departures in the same route invocation.
                 statePool.resetStateBags();
                 touchedPatterns.clear();
                 touchedStops.clear();
+                touchedStopsLastRoundSize = 0;
                 // Round 0 is in essence non-transit access.
                 round = 0;
                 // final to allow use in the lambda function below
@@ -751,9 +754,11 @@ public class McRaptorSuboptimalPathProfileRouter {
 
                 for (McRaptorState state : bagAtStop.getNonTransferStates()) {
                     McRaptorState stateAtDest = statePool.borrow();
+                    boolean stateAtDestFromPool = true;
                     if (stateAtDest == state) {
                         // Defensive guard: if the pool hands back a still-live state, avoid creating a self-cycle.
                         stateAtDest = new McRaptorState();
+                        stateAtDestFromPool = false;
                     }
                     stateAtDest.back = state;
                     stateAtDest.pattern = -1;
@@ -763,9 +768,12 @@ public class McRaptorSuboptimalPathProfileRouter {
                     stateAtDest.egressMode = mode;
                     stateAtDest.time = state.time + egressTime;
 
-                    // Do not return rejected states to the pool mid-search.
-                    // Reuse is deferred until statePool.reset() to avoid aliasing/cycle corruption.
-                    bag.add(stateAtDest);
+                    // Safe early return: destination states are terminal and local to this method.
+                    // If rejected, this instance is unreachable from all live search structures.
+                    boolean retained = bag.add(stateAtDest);
+                    if (!retained && stateAtDestFromPool) {
+                        statePool.returnState(stateAtDest);
+                    }
                 }
 
                 return true;
