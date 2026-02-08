@@ -443,7 +443,6 @@ public class McRaptorSuboptimalPathProfileRouter {
             // FIXME we are using a map here with unorthodox definitions of hashcode and equals to make them serve as map keys.
             // We should instead wrap PathWithTimes or copy the relevant fields into a PatternSequenceKey class.
             Map<PathWithTimes, PathWithTimes> paths = new HashMap<>();
-            Set<McRaptorState> returnedStates = Collections.newSetFromMap(new IdentityHashMap<>());
 
             //  Manual iteration - no lambda allocation
             for (McRaptorState s : states) {
@@ -469,11 +468,9 @@ public class McRaptorSuboptimalPathProfileRouter {
                         LOG.debug("Skipping path due to missing access/egress stop: {}", ex.getMessage());
                     }
                 } finally {
-                    // After PathWithTimes is constructed, the McRaptorState is no longer needed.
-                    // Return it to the pool to reduce live set size.
-                    if (returnedStates.add(s)) {
-                        statePool.returnState(s);
-                    }
+                    // Intentionally no per-state return during active routing.
+                    // All pooled state instances are reclaimed together at statePool.reset()
+                    // before the next route invocation.
                 }
             }
 
@@ -766,10 +763,9 @@ public class McRaptorSuboptimalPathProfileRouter {
                     stateAtDest.egressMode = mode;
                     stateAtDest.time = state.time + egressTime;
 
-                    boolean added = bag.add(stateAtDest);
-                    if (!added) {
-                        statePool.returnState(stateAtDest);
-                    }
+                    // Do not return rejected states to the pool mid-search.
+                    // Reuse is deferred until statePool.reset() to avoid aliasing/cycle corruption.
+                    bag.add(stateAtDest);
                 }
 
                 return true;
@@ -871,22 +867,18 @@ public class McRaptorSuboptimalPathProfileRouter {
         if (boardStopPosition >= 0) {
             TripPattern patt = network.transitLayer.tripPatterns.get(pattern);
             if (boardStopPosition >= patt.stops.length) {
-                statePool.returnState(state);
                 return false;
             }
             int boardStop = patt.stops[boardStopPosition];
 
             if (back == null || boardStop != back.stop) {
-                statePool.returnState(state);
                 return false;
             }
 
             if (alightStopPosition < 0 || alightStopPosition >= patt.stops.length) {
-                statePool.returnState(state);
                 return false;
             }
             if (stop != patt.stops[alightStopPosition]) {
-                statePool.returnState(state);
                 return false;
             }
         }
@@ -913,9 +905,8 @@ public class McRaptorSuboptimalPathProfileRouter {
         }
         boolean optimal = bag.add(state);
 
-        if (!optimal) {
-            statePool.returnState(state);
-        }
+        // If not retained, intentionally do not return to pool mid-search.
+        // The pool is bulk-reset between route invocations.
 
         // target pruning: keep track of best time at destination
         if (egressTimes != null && optimal && pattern != -1) {
