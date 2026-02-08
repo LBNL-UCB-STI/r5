@@ -432,6 +432,7 @@ public class McRaptorSuboptimalPathProfileRouter {
         // FIXME we are using a map here with unorthodox definitions of hashcode and equals to make them serve as map keys.
         // We should instead wrap PathWithTimes or copy the relevant fields into a PatternSequenceKey class.
         Map<PathWithTimes, PathWithTimes> paths = new HashMap<>();
+        Set<McRaptorState> returnedStates = Collections.newSetFromMap(new IdentityHashMap<>());
 
         //  Manual iteration - no lambda allocation
         for (McRaptorState s : states) {
@@ -459,7 +460,9 @@ public class McRaptorSuboptimalPathProfileRouter {
             } finally {
                 // After PathWithTimes is constructed, the McRaptorState is no longer needed.
                 // Return it to the pool to reduce live set size.
-                statePool.returnState(s);
+                if (returnedStates.add(s)) {
+                    statePool.returnState(s);
+                }
             }
         }
 
@@ -1106,30 +1109,22 @@ public class McRaptorSuboptimalPathProfileRouter {
                 // by round snapshots or back-pointers used later in this search.
                 return best.add(state, evicted -> {});
             } else {
-                // Transit state: goes in both.
-                // Add to 'best' first because some DominatingList implementations lazily compute fare there.
-                // Cloning before that would duplicate fare computation in nonTransfer (expensive back-chain walk).
+                // Transit state can be stored in both lists. Keep ownership strict:
+                // - if retained in both, they must be different objects;
+                // - never return a state that may still be retained by one list.
                 boolean addedToBest = best.add(state, evicted -> {});
 
-                // Keep best/nonTransfer entries independent to avoid aliasing corruption when one list evicts.
-                McRaptorState copy = new McRaptorState();
-                copy.copyFrom(state);
-                boolean addedToNonTransfer = nonTransfer.add(copy, evicted -> {});
-
-                // Ensure we return any instances that were not retained in either list.
-                // copy is intentionally non-pooled; let GC reclaim it when not retained.
-
-                if (!addedToBest) {
-                    if (addedToNonTransfer) {
-                        // state was not added to 'best', but it was added to 'nonTransfer' (as a copy),
-                        // so the method returns true. The caller will NOT return 'state', so we must.
-                        statePool.returnState(state);
-                    }
-                    // if addedToNonTransfer is also false, the whole method returns false
-                    // and the caller (addState) will return 'state'.
+                if (addedToBest) {
+                    // Clone only when we truly need two retained instances.
+                    McRaptorState copy = new McRaptorState();
+                    copy.copyFrom(state);
+                    nonTransfer.add(copy, evicted -> {});
+                    return true;
                 }
 
-                return addedToBest || addedToNonTransfer;
+                // Not retained in 'best': attempt to retain the borrowed state directly in nonTransfer.
+                // If this returns false, caller will return state to pool exactly once.
+                return nonTransfer.add(state, evicted -> {});
             }
         }
 
@@ -1159,4 +1154,5 @@ public class McRaptorSuboptimalPathProfileRouter {
             return nonTransfer.getNonDominatedStates();
         }
     }
+
 }
