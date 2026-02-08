@@ -858,10 +858,12 @@ public class McRaptorSuboptimalPathProfileRouter {
         if (back != null && back.time > time)
             throw new IllegalStateException("Attempt to decrement time in state!");
         McRaptorState state = statePool.borrow();
+        boolean stateFromPool = true;
         if (back != null && state == back) {
             // Defensive guard: if a pooled instance aliases the back-pointer state,
             // setting fields would create state.back == state.
             state = new McRaptorState();
+            stateFromPool = false;
         }
 
         if (back != null) {
@@ -913,8 +915,11 @@ public class McRaptorSuboptimalPathProfileRouter {
         }
         boolean optimal = bag.add(state);
 
-        // If not retained, intentionally do not return to pool mid-search.
-        // The pool is bulk-reset between route invocations.
+        // Safe early return: if the state was rejected by the bag and came from the pool,
+        // it is unreachable from all live search structures and can be recycled immediately.
+        if (!optimal && stateFromPool) {
+            statePool.returnState(state);
+        }
 
         // target pruning: keep track of best time at destination
         if (egressTimes != null && optimal && pattern != -1) {
