@@ -90,9 +90,11 @@ public class McRaptorStatePool {
     }
 
     public void reset() {
-        // Return all states to available.
-        for (McRaptorSuboptimalPathProfileRouter.McRaptorState state : pool) {
-            state.reset();
+        // Only reset states that are currently checked out from the pooled segment.
+        // States already returned via returnState(...) were reset on return.
+        // Borrowed pooled states occupy indices [nextAvailable, pool.length).
+        for (int i = nextAvailable; i < pool.length; i++) {
+            pool[i].reset();
         }
         nextAvailable = pool.length;
         // Reset StateBag pool
