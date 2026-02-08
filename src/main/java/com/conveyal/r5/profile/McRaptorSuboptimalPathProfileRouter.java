@@ -245,8 +245,15 @@ public class McRaptorSuboptimalPathProfileRouter {
                             "Router instances are not thread-safe and must not be reused concurrently."
             );
         }
-
         try {
+            return routeInternal();
+        } finally {
+            inUse.set(false);
+        }
+    }
+
+    /** Internal route implementation; caller must hold the inUse lock. */
+    private Collection<McRaptorState> routeInternal () {
             // Modeify does its own pre-computation of accessTimes, but Analysis does not
             if (accessTimes == null) computeAccessTimes();
 
@@ -371,9 +378,6 @@ public class McRaptorSuboptimalPathProfileRouter {
 
             // will be empty unless this is for a PointToPointQuery.
             return codominatingStatesToBeReturned;
-        } finally {
-            inUse.set(false);
-        }
     }
 
     /** compute access times based on the profile request. NB this does not do a search-per-mode */
@@ -424,54 +428,64 @@ public class McRaptorSuboptimalPathProfileRouter {
 
     /** Perform a McRAPTOR search and extract paths */
     public Collection<PathWithTimes> getPaths() {
-        Collection<McRaptorState> states = route();
-
-        // A map to keep track of the best path among each group of paths using the same sequence of patterns.
-        // We will often find multiple paths that board or transfer to the same patterns at different locations.
-        // We only want to retain the best set of boarding, transfer, and alighting stops for a particular pattern sequence.
-        // FIXME we are using a map here with unorthodox definitions of hashcode and equals to make them serve as map keys.
-        // We should instead wrap PathWithTimes or copy the relevant fields into a PatternSequenceKey class.
-        Map<PathWithTimes, PathWithTimes> paths = new HashMap<>();
-        Set<McRaptorState> returnedStates = Collections.newSetFromMap(new IdentityHashMap<>());
-
-        //  Manual iteration - no lambda allocation
-        for (McRaptorState s : states) {
-            TIntIntMap access = accessTimes.get(s.accessMode);
-            TIntIntMap egress = egressTimes.get(s.egressMode);
-            if (access == null || egress == null) {
-                if (LOG.isDebugEnabled()) {
-                    LOG.debug("Skipping path: missing access/egress times (accessMode={}, egressMode={})",
-                            s.accessMode, s.egressMode);
-                }
-                continue;
-            }
-            try {
-                PathWithTimes pwt = new PathWithTimes(s, network, request, access, egress);
-
-                //  Single lookup instead of containsKey + get
-                PathWithTimes existing = paths.get(pwt);
-                if (existing == null || existing.stats.avg > pwt.stats.avg) {
-                    paths.put(pwt, pwt);
-                }
-            } catch (IllegalArgumentException ex) {
-                if (LOG.isDebugEnabled()) {
-                    LOG.debug("Skipping path due to missing access/egress stop: {}", ex.getMessage());
-                }
-            } finally {
-                // After PathWithTimes is constructed, the McRaptorState is no longer needed.
-                // Return it to the pool to reduce live set size.
-                if (returnedStates.add(s)) {
-                    statePool.returnState(s);
-                }
-            }
+        if (!inUse.compareAndSet(false, true)) {
+            throw new IllegalStateException(
+                    "McRaptorSuboptimalPathProfileRouter is already in use. " +
+                            "Router instances are not thread-safe and must not be reused concurrently."
+            );
         }
+        try {
+            Collection<McRaptorState> states = routeInternal();
 
-        if (LOG.isDebugEnabled()) {
-            LOG.debug("{} states led to {} paths", states.size(), paths.size());
-            paths.values().forEach(p -> LOG.debug("{}", p.dump(network)));
+            // A map to keep track of the best path among each group of paths using the same sequence of patterns.
+            // We will often find multiple paths that board or transfer to the same patterns at different locations.
+            // We only want to retain the best set of boarding, transfer, and alighting stops for a particular pattern sequence.
+            // FIXME we are using a map here with unorthodox definitions of hashcode and equals to make them serve as map keys.
+            // We should instead wrap PathWithTimes or copy the relevant fields into a PatternSequenceKey class.
+            Map<PathWithTimes, PathWithTimes> paths = new HashMap<>();
+            Set<McRaptorState> returnedStates = Collections.newSetFromMap(new IdentityHashMap<>());
+
+            //  Manual iteration - no lambda allocation
+            for (McRaptorState s : states) {
+                TIntIntMap access = accessTimes.get(s.accessMode);
+                TIntIntMap egress = egressTimes.get(s.egressMode);
+                if (access == null || egress == null) {
+                    if (LOG.isDebugEnabled()) {
+                        LOG.debug("Skipping path: missing access/egress times (accessMode={}, egressMode={})",
+                                s.accessMode, s.egressMode);
+                    }
+                    continue;
+                }
+                try {
+                    PathWithTimes pwt = new PathWithTimes(s, network, request, access, egress);
+
+                    //  Single lookup instead of containsKey + get
+                    PathWithTimes existing = paths.get(pwt);
+                    if (existing == null || existing.stats.avg > pwt.stats.avg) {
+                        paths.put(pwt, pwt);
+                    }
+                } catch (IllegalArgumentException ex) {
+                    if (LOG.isDebugEnabled()) {
+                        LOG.debug("Skipping path due to missing access/egress stop: {}", ex.getMessage());
+                    }
+                } finally {
+                    // After PathWithTimes is constructed, the McRaptorState is no longer needed.
+                    // Return it to the pool to reduce live set size.
+                    if (returnedStates.add(s)) {
+                        statePool.returnState(s);
+                    }
+                }
+            }
+
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("{} states led to {} paths", states.size(), paths.size());
+                paths.values().forEach(p -> LOG.debug("{}", p.dump(network)));
+            }
+
+            return new ArrayList<>(paths.values());
+        } finally {
+            inUse.set(false);
         }
-
-        return new ArrayList<>(paths.values());
     }
 
     private void ensureCapacity(int needed) {
@@ -740,6 +754,10 @@ public class McRaptorSuboptimalPathProfileRouter {
 
                 for (McRaptorState state : bagAtStop.getNonTransferStates()) {
                     McRaptorState stateAtDest = statePool.borrow();
+                    if (stateAtDest == state) {
+                        // Defensive guard: if the pool hands back a still-live state, avoid creating a self-cycle.
+                        stateAtDest = new McRaptorState();
+                    }
                     stateAtDest.back = state;
                     stateAtDest.pattern = -1;
                     stateAtDest.trip = -1;
@@ -836,6 +854,11 @@ public class McRaptorSuboptimalPathProfileRouter {
         if (back != null && back.time > time)
             throw new IllegalStateException("Attempt to decrement time in state!");
         McRaptorState state = statePool.borrow();
+        if (back != null && state == back) {
+            // Defensive guard: if a pooled instance aliases the back-pointer state,
+            // setting fields would create state.back == state.
+            state = new McRaptorState();
+        }
 
         if (back != null) {
             state.setFrom(back, stop, boardStopPosition, alightStopPosition, time, boardTime, pattern, trip, round);
