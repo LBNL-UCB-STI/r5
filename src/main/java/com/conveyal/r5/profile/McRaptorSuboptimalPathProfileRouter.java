@@ -39,6 +39,7 @@ public class McRaptorSuboptimalPathProfileRouter {
     
     private static final Logger LOG = LoggerFactory.getLogger(McRaptorSuboptimalPathProfileRouter.class);
     private final McRaptorStatePool statePool;
+    private static final int MAX_DETERMINISTIC_DEPARTURE_COUNT = 10;
 
     public static final int BOARD_SLACK = 60;
 
@@ -94,6 +95,8 @@ public class McRaptorSuboptimalPathProfileRouter {
     private long routeInvocationSequence = 0;
     private long activeRouteInvocationId = 0;
     private int activeDepartureIndex = -1;
+    /** Number of departure times sampled in the most recent route invocation. */
+    private int lastSampledDepartureCount = 0;
 
     public McRaptorSuboptimalPathProfileRouter(
             TransportNetwork network,
@@ -237,6 +240,11 @@ public class McRaptorSuboptimalPathProfileRouter {
         return statePool.getExhaustionsSinceReset();
     }
 
+    /** Returns the number of departure times sampled in the most recent route invocation. */
+    public int getLastSampledDepartureCount() {
+        return lastSampledDepartureCount;
+    }
+
     /** Get a McRAPTOR state bag for every departure minute */
     public Collection<McRaptorState> route () {
         if (!inUse.compareAndSet(false, true)) {
@@ -302,6 +310,7 @@ public class McRaptorSuboptimalPathProfileRouter {
             }
 
             ArrayList<Integer> departureTimes = generateDepartureTimesToSample(request);
+            lastSampledDepartureCount = departureTimes.size();
 
             // Only enforce exact count for Monte Carlo mode
             // In deterministic mode (monteCarloDraws == 0), use whatever was generated
@@ -784,9 +793,23 @@ public class McRaptorSuboptimalPathProfileRouter {
     }
 
     private ArrayList<Integer> generateDepartureTimesToSample(ProfileRequest request) {
-        ArrayList<Integer> departureTimes = new ArrayList<>(1);
-        // BEAM deterministic mode: evaluate a single departure time for consistency with scheduled vehicles.
-        departureTimes.add(request.fromTime);
+        int count = Math.max(1, Math.min(request.mcRaptorDeterministicDepartureCount, MAX_DETERMINISTIC_DEPARTURE_COUNT));
+        int step = Math.max(1, request.mcRaptorDeterministicDepartureStepSeconds);
+
+        ArrayList<Integer> departureTimes = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            int t = request.fromTime + i * step;
+            if (t >= request.toTime) break;
+            departureTimes.add(t);
+        }
+
+        // Defensive guard for degenerate windows.
+        if (departureTimes.isEmpty()) {
+            departureTimes.add(request.fromTime);
+        }
+
+        // Process from latest to earliest to align with target pruning assumptions.
+        Collections.reverse(departureTimes);
         return departureTimes;
     }
 
