@@ -224,6 +224,21 @@ public class ProfileRequest implements Serializable, Cloneable {
      */
     public int monteCarloDraws = 220;
 
+    /**
+     * Number of deterministic departure times to evaluate in McRAPTOR when {@code monteCarloDraws == 0}.
+     * Departure times are spaced {@code mcRaptorDeterministicDepartureStepSeconds} apart, starting at
+     * {@code fromTime}, and clamped to {@code [fromTime, toTime)}.
+     *
+     * A value of 1 preserves existing single-departure behavior.
+     */
+    public int mcRaptorDeterministicDepartureCount = 1;
+
+    /**
+     * Spacing in seconds between deterministic departure samples when
+     * {@code mcRaptorDeterministicDepartureCount > 1}.
+     */
+    public int mcRaptorDeterministicDepartureStepSeconds = 120;
+
     public ProfileRequest clone () {
         try {
             return (ProfileRequest) super.clone();
