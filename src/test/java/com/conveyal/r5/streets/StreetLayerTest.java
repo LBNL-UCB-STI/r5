@@ -243,6 +243,35 @@ public class StreetLayerTest extends TestCase {
          assertEquals(originalLength, accumulatedBackwardLength);
      }
 
+    @Test
+    public void testSplitAtEdgeEndpointReusesExistingVertex() {
+        OSM osm = new OSM(null);
+        osm.intersectionDetection = true;
+        osm.readFromUrl(StreetLayerTest.class.getResource("snake-rd.pbf").toString());
+
+        StreetLayer streetLayer = new StreetLayer(TNBuilderConfig.defaultConfig());
+        streetLayer.loadFromOsm(osm, false, true);
+        osm.close();
+        streetLayer.indexStreets();
+
+        assertEquals(2, streetLayer.edgeStore.nEdges());
+        EdgeStore.Edge edge = streetLayer.edgeStore.getCursor(0);
+        int originalVertexCount = streetLayer.vertexStore.getVertexCount();
+        int originalEdgeCount = streetLayer.edgeStore.nEdges();
+
+        int originalFromVertex = edge.getFromVertex();
+        VertexStore.Vertex fromVertex = streetLayer.vertexStore.getCursor(originalFromVertex);
+        Split split = new Split();
+        split.edge = edge.edgeIndex;
+        split.fixedLat = fromVertex.getFixedLat();
+        split.fixedLon = fromVertex.getFixedLon();
+        int returnedVertex = streetLayer.splitEdge(split);
+
+        assertEquals(originalFromVertex, returnedVertex);
+        assertEquals(originalVertexCount, streetLayer.vertexStore.getVertexCount());
+        assertEquals(originalEdgeCount, streetLayer.edgeStore.nEdges());
+    }
+
     /** Test that simple turn restrictions (no via ways) are read properly, using http://www.openstreetmap.org/relation/5696764 */
     @Test
     public void testSimpleTurnRestriction () {
