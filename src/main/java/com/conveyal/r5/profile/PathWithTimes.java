@@ -88,7 +88,13 @@ public class PathWithTimes extends Path {
         // loop over departures within the time window
         // firstTrip is the trip on the first pattern
         int firstTrip = 0;
-        while (times[0][firstTrip][0] < req.fromTime + accessTime + FastRaptorWorker.BOARD_SLACK_SECONDS) firstTrip++;
+        while (firstTrip < times[0].length &&
+                times[0][firstTrip][0] < req.fromTime + accessTime + FastRaptorWorker.BOARD_SLACK_SECONDS) {
+            firstTrip++;
+        }
+        if (firstTrip >= times[0].length) {
+            throw new IllegalArgumentException("No feasible first-leg trips remain after access time and board slack");
+        }
 
         // now interleave times
         double walkSpeedMillimetersPerSecond = req.walkSpeed * 1000;

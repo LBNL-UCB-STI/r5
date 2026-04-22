@@ -477,7 +477,7 @@ public class McRaptorSuboptimalPathProfileRouter {
                     }
                 } catch (IllegalArgumentException ex) {
                     if (LOG.isDebugEnabled()) {
-                        LOG.debug("Skipping path due to missing access/egress stop: {}", ex.getMessage());
+                        LOG.debug("Skipping path during timing reconstruction: {}", ex.getMessage());
                     }
                 } finally {
                     // Intentionally no per-state return during active routing.
