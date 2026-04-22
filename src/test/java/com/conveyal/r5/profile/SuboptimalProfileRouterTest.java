@@ -8,6 +8,7 @@ import com.conveyal.r5.streets.McRaptorStatePool;
 import com.conveyal.r5.streets.StreetRouter;
 import com.conveyal.r5.transit.TransportNetwork;
 import gnu.trove.map.TIntIntMap;
+import gnu.trove.map.hash.TIntIntHashMap;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -95,6 +96,53 @@ public class SuboptimalProfileRouterTest {
 
         assertEquals(1, route1Paths);
         assertEquals(1, route2Paths);
+    }
+
+    @Test
+    public void testPathWithTimesSkipsPathsWhenFirstTripIsAlreadyMissed() {
+        ProfileRequest request = new ProfileRequest();
+        request.walkSpeed = 1.3f;
+        request.fromTime = 7 * 3600;
+        request.toTime = 8 * 3600;
+        request.monteCarloDraws = 0;
+
+        int patternIndex = 0;
+        int boardStop = network.transitLayer.tripPatterns.get(patternIndex).stops[0];
+        int alightStop = network.transitLayer.tripPatterns.get(patternIndex).stops[1];
+
+        network.transitLayer.tripPatterns.get(patternIndex).tripSchedules =
+                Collections.singletonList(network.transitLayer.tripPatterns.get(patternIndex).tripSchedules.get(0));
+
+        TIntIntHashMap accessTimes = new TIntIntHashMap();
+        accessTimes.put(boardStop, 1);
+        TIntIntHashMap egressTimes = new TIntIntHashMap();
+        egressTimes.put(alightStop, 0);
+
+        McRaptorSuboptimalPathProfileRouter.McRaptorState origin =
+                new McRaptorSuboptimalPathProfileRouter.McRaptorState();
+        origin.setOrigin(boardStop, request.fromTime, 0, LegMode.WALK);
+
+        McRaptorSuboptimalPathProfileRouter.McRaptorState transit =
+                new McRaptorSuboptimalPathProfileRouter.McRaptorState();
+        transit.setFrom(
+                origin,
+                alightStop,
+                0,
+                1,
+                network.transitLayer.tripPatterns.get(patternIndex).tripSchedules.get(0).arrivals[1],
+                network.transitLayer.tripPatterns.get(patternIndex).tripSchedules.get(0).departures[0],
+                patternIndex,
+                0,
+                1
+        );
+        transit.egressMode = LegMode.WALK;
+
+        try {
+            new PathWithTimes(transit, network, request, accessTimes, egressTimes);
+            fail("Expected infeasible path timing reconstruction to be skipped");
+        } catch (IllegalArgumentException expected) {
+            assertTrue(expected.getMessage().contains("No feasible first-leg trips remain"));
+        }
     }
 
     @Test
