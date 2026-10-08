@@ -1091,7 +1091,7 @@ public class StreetLayer implements Serializable, Cloneable {
                 // first see if the network already has lengths defined
                 edgeLengthMillimeters = (int) Math.round(Float.parseFloat(way.getTag("length")) * 1000.0);
             } else {
-                LOG.warn("OSMNx networks shouldn't have multiple nodes");
+                LOG.debug("OSMNx networks shouldn't have multiple nodes");
                 throw new NotImplementedException("");
             }
         } catch (NumberFormatException | NullPointerException | NotImplementedException ex) {
