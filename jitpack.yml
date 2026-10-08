@@ -1,4 +1,4 @@
 jdk:
   - openjdk11
 install:
-  - ./mvnw clean install -DskipTests
+  - ./mvnw clean install -DskipTests -Dgpg.skip=true
