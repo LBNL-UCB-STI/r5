@@ -44,7 +44,7 @@
     <!-- Define some variables to be used elsewhere in the build. -->
     <properties>
         <geotools.version>21.2</geotools.version>
-        <jackson.version>2.6.1</jackson.version>
+        <jackson.version>2.12.7</jackson.version>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
 
@@ -391,7 +391,7 @@
         <dependency>
             <groupId>org.apache.commons</groupId>
             <artifactId>commons-math3</artifactId>
-            <version>3.0</version>
+            <version>3.6.1</version>
         </dependency>
 
         <!-- Conveyal library for loading and storing GTFS transit data. -->
@@ -411,19 +411,19 @@
         <dependency>
             <groupId>org.slf4j</groupId>
             <artifactId>slf4j-api</artifactId>
-            <version>1.7.30</version>
+            <version>1.7.36</version>
         </dependency>
         <!-- Logging API implementation. -->
         <dependency>
             <groupId>ch.qos.logback</groupId>
             <artifactId>logback-classic</artifactId>
-            <version>1.2.3</version>
+            <version>1.2.13</version>
         </dependency>
         <!-- Junit is for unit testing. -->
         <dependency>
             <groupId>junit</groupId>
             <artifactId>junit</artifactId>
-            <version>4.12</version>
+            <version>4.13.2</version>
             <scope>test</scope>
         </dependency>
         <!-- Provides some shared serializers for Kryo. Introduces transitive dependencies on Guava, Trove, and Kryo. -->
