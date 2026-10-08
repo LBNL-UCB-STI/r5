@@ -41,6 +41,38 @@ CYGWIN* | MINGW*)
   ;;
 esac
 
+if [ -n "${JAVA_HOME-}" ] && [ ! -x "${JAVA_HOME}/bin/java" ]; then
+  unset JAVA_HOME
+fi
+if [ -z "${JAVA_HOME-}" ]; then
+  for cand in \
+    /usr/lib/jvm/java-11-openjdk-amd64 \
+    /usr/lib/jvm/java-11-openjdk \
+    /usr/lib/jvm/temurin-11-jdk-amd64 \
+    /usr/lib/jvm/zulu-11-amd64 \
+    /usr/lib/jvm/default-java; do
+    if [ -x "$cand/bin/java" ]; then
+      export JAVA_HOME="$cand"
+      break
+    fi
+  done
+fi
+if [ -z "${JAVA_HOME-}" ]; then
+  _jcmd="$(command -v javac 2>/dev/null || command -v java 2>/dev/null || true)"
+  if [ -n "$_jcmd" ]; then
+    _jpath="$(readlink -f "$_jcmd" 2>/dev/null || true)"
+    if [ -n "$_jpath" ]; then
+      _jdir="$(dirname "$(dirname "$_jpath")")"
+      if [ -x "$_jdir/bin/java" ]; then
+        export JAVA_HOME="$_jdir"
+      fi
+    fi
+  fi
+fi
+if [ -n "${JAVA_HOME-}" ]; then
+  echo "mvnw using JAVA_HOME=${JAVA_HOME}" >&2
+fi
+
 # set JAVACMD and JAVACCMD
 set_java_home() {
   # For Cygwin and MinGW, ensure paths are in Unix format before anything is touched
